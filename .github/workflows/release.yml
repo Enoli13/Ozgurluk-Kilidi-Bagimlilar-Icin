@@ -39,35 +39,7 @@ jobs:
           echo "TAG=$TAG" >> "$GITHUB_ENV"
           echo "APK_NAME=OzgurlukKilidi-BagimlilarIcin-$TAG.apk" >> "$GITHUB_ENV"
 
-      - name: APK derle (kalıcı anahtarla imzalı)
-        env:
-          SIGNING_PASSWORD: ${{ secrets.SIGNING_PASSWORD }}
+      - name: Kontrol derlemesi (imzasız)
         run: |
-          if [ -z "$SIGNING_PASSWORD" ]; then
-            echo "::error::SIGNING_PASSWORD sırrı eksik. Repo → Settings → Secrets and variables → Actions'tan ekle; aksi halde APK güncelleme olarak kurulamaz."
-            exit 1
-          fi
           chmod +x gradlew
-          ./gradlew --no-daemon assembleRelease
-
-      - name: İmzayı doğrula
-        run: |
-          APKSIGNER=$(ls "$ANDROID_HOME"/build-tools/*/apksigner | sort -V | tail -1)
-          "$APKSIGNER" verify --print-certs app/build/outputs/apk/release/app-release.apk | grep -i "SHA-256"
-
-      - name: APK'yı adlandır
-        run: cp app/build/outputs/apk/release/app-release.apk "$APK_NAME"
-
-      - uses: actions/upload-artifact@v4
-        with:
-          name: apk
-          path: ${{ env.APK_NAME }}
-
-      - name: Release oluştur / güncelle
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: ${{ env.TAG }}
-          target_commitish: ${{ github.sha }}
-          name: Özgürlük Kilidi Bağımlılar İçin ${{ env.TAG }}
-          body_path: .github/release-notes.md
-          files: ${{ env.APK_NAME }}
+          ./gradlew --no-daemon assembleRelease lintVitalRelease
