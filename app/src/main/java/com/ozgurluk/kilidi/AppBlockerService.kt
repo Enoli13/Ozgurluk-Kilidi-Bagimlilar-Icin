@@ -47,6 +47,10 @@ class AppBlockerService : AccessibilityService() {
     /** Ayarlar ekranı taramasının sıklık sınırı. */
     private var lastSettingsScanAt = 0L
 
+    /** Yüzen pencere / PiP kalkanı ve tarama sıklık sınırı. */
+    private var floatingGuard: FloatingGuard? = null
+    private var lastFloatingScanAt = 0L
+
     /**
      * Pencere olayları yalnızca uygulama değişince gelir. Kilit saati başladığında yasaklı bir
      * uygulama zaten açıksa hiçbir olay gelmez; bu denetleyici o durumu da yakalar.
@@ -56,6 +60,7 @@ class AppBlockerService : AccessibilityService() {
             AddictGuard.expireIfDone(this@AppBlockerService)
             measureUsage()
             refreshWidgetIfDue()
+            updateFloating(force = true)
             foregroundPkg?.let { pkg ->
                 if (pkg in SETTINGS_PACKAGES && isUserLooking()) guardSettings(force = true)
                 if (isUserLooking() && shouldBlock(pkg)) {
@@ -70,6 +75,7 @@ class AppBlockerService : AccessibilityService() {
     override fun onServiceConnected() {
         super.onServiceConnected()
         launcherPkgs = queryLauncherPackages()
+        floatingGuard = FloatingGuard(this)
         lastMeasureAt = SystemClock.elapsedRealtime()
         if (LockSettings.isAddictModeOn(this)) AddictGuard.harden(this)
         handler.removeCallbacks(watchdog)
@@ -78,12 +84,19 @@ class AppBlockerService : AccessibilityService() {
 
     override fun onDestroy() {
         flushUsage(force = true)
+        floatingGuard?.clear()
+        floatingGuard = null
         handler.removeCallbacksAndMessages(null)
         super.onDestroy()
     }
 
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
         if (event == null) return
+        // Yüzen pencere / PiP açıldı, taşındı ya da kapandı
+        if (event.eventType == AccessibilityEvent.TYPE_WINDOWS_CHANGED) {
+            updateFloating(force = false)
+            return
+        }
         val pkg = event.packageName?.toString() ?: return
 
         // Ayarlar içindeki gezinti (alt sayfalar) çoğu zaman yalnızca içerik değişimi olarak gelir.
@@ -128,6 +141,26 @@ class AppBlockerService : AccessibilityService() {
         if (!LockSettings.shouldLockNow(this)) return false
         return pkg !in LockSettings.allowedApps(this) // seçilen serbest uygulamalar
     }
+
+    /**
+     * Kilit sürerken serbest olmayan uygulamaların yüzen pencerelerini ve PiP videolarını kapatır.
+     * Pencere olayları çok sık gelebildiği için en fazla 250 ms'de bir tarar; watchdog her iki
+     * saniyede bir son durumu yeniden uygular.
+     */
+    private fun updateFloating(force: Boolean) {
+        val guard = floatingGuard ?: return
+        val now = SystemClock.elapsedRealtime()
+        if (!force && now - lastFloatingScanAt < FLOATING_SCAN_MIN_MS) {
+            handler.removeCallbacks(floatingRetry)
+            handler.postDelayed(floatingRetry, FLOATING_SCAN_MIN_MS)
+            return
+        }
+        lastFloatingScanAt = now
+        val locked = LockSettings.shouldLockNow(this) && isUserLooking()
+        guard.update(locked, if (locked) LockSettings.limitExcludedPackages(this) else emptySet())
+    }
+
+    private val floatingRetry = Runnable { updateFloating(force = true) }
 
     private fun isUninstallScreen(className: String?): Boolean =
         className?.contains("uninstall", ignoreCase = true) == true
@@ -336,6 +369,7 @@ class AppBlockerService : AccessibilityService() {
                 .replace("i\u0307", "i").replace('ı', 'i')
 
         const val SETTINGS_SCAN_MIN_MS = 600L
+        const val FLOATING_SCAN_MIN_MS = 250L
         const val MAX_SCAN_NODES = 600
         const val WIDGET_REFRESH_MS = 60_000L
 
