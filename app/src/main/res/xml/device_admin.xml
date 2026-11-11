@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    Hiçbir yönetici yetkisi kullanılmaz. Etkin cihaz yöneticisi olmak, "Bağımlılar İçin" modu
+    sürerken uygulamanın silinmesini engellemek için yeterlidir.
+-->
+<device-admin>
+    <uses-policies />
+</device-admin>
