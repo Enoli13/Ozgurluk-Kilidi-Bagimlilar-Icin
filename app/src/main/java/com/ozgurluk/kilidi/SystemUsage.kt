@@ -21,13 +21,21 @@ object SystemUsage {
 
     private data class Interval(val pkg: String, val start: Long, val end: Long)
 
-    private const val CACHE_MS = 10_000L
+    private const val CACHE_MS = 5_000L
 
-    private var cacheDate: LocalDate? = null
+    // Artımlı okuma durumu: her yenilemede yalnızca son okumadan bu yana gelen olaylar okunur.
+    // (Önceden her seferinde günün tüm kayıtları baştan okunuyordu; akşam saatlerinde bu
+    // saniyeler sürüyor ve kilidin geç devreye girmesine yol açıyordu.)
+    private var stateDate: LocalDate? = null
+    private var lastEnd = 0L
+    private val resumed = HashMap<String, MutableSet<String>>() // paket -> öndeki etkinlikler
+    private val openSince = HashMap<String, Long>()
+    private val closed = ArrayList<Interval>()
+
     private var cacheAt = 0L
     private var cache: List<Interval> = emptyList()
 
-    /** Önbelleği temizler (örn. mola saatleri değişince ya da gün dönünce). */
+    /** Önbelleği temizler (örn. mola saatleri değişince). */
     @Synchronized
     fun invalidate() {
         cacheAt = 0L
@@ -35,59 +43,65 @@ object SystemUsage {
 
     @Synchronized
     private fun intervals(context: Context): List<Interval>? {
-        val today = LocalDate.now()
         val nowElapsed = SystemClock.elapsedRealtime()
-        if (cacheDate == today && nowElapsed - cacheAt < CACHE_MS && cacheAt != 0L) return cache
-        val fresh = readIntervals(context, today) ?: return null
-        cache = fresh
-        cacheDate = today
+        if (stateDate == LocalDate.now() && cacheAt != 0L && nowElapsed - cacheAt < CACHE_MS) return cache
+        if (!refresh(context)) return null
+        val now = System.currentTimeMillis()
+        val snapshot = ArrayList<Interval>(closed.size + openSince.size)
+        snapshot.addAll(closed)
+        openSince.forEach { (pkg, s) -> if (now > s) snapshot += Interval(pkg, s, now) }
+        cache = snapshot
         cacheAt = nowElapsed
-        return fresh
+        return snapshot
     }
 
+    /** Son okumadan bu yana gelen kullanım olaylarını işler. */
     @Suppress("DEPRECATION")
-    private fun readIntervals(context: Context, today: LocalDate): List<Interval>? = try {
-        val usm = context.getSystemService(UsageStatsManager::class.java)
-        val dayStart = today.atStartOfDay(ZoneId.systemDefault()).toInstant().toEpochMilli()
-        val now = System.currentTimeMillis()
-        val events = usm.queryEvents(dayStart, now)
-        val event = UsageEvents.Event()
-
-        val resumed = HashMap<String, MutableSet<String>>() // paket -> öndeki etkinlikler
-        val openSince = HashMap<String, Long>()
-        val out = ArrayList<Interval>()
-
-        fun close(pkg: String, at: Long) {
-            val s = openSince.remove(pkg) ?: return
-            if (at > s) out += Interval(pkg, s, at)
+    private fun refresh(context: Context): Boolean = try {
+        val today = LocalDate.now()
+        if (stateDate != today) {
+            stateDate = today
+            lastEnd = today.atStartOfDay(ZoneId.systemDefault()).toInstant().toEpochMilli()
+            resumed.clear(); openSince.clear(); closed.clear()
         }
+        val usm = context.getSystemService(UsageStatsManager::class.java)
+        val now = System.currentTimeMillis()
+        if (now > lastEnd) {
+            val events = usm.queryEvents(lastEnd, now)
+            val event = UsageEvents.Event()
 
-        while (events.hasNextEvent()) {
-            events.getNextEvent(event)
-            val pkg = event.packageName ?: continue
-            val cls = event.className ?: ""
-            val t = event.timeStamp
-            when (event.eventType) {
-                UsageEvents.Event.ACTIVITY_RESUMED -> {
-                    resumed.getOrPut(pkg) { HashSet() }.add(cls)
-                    if (pkg !in openSince) openSince[pkg] = t
-                }
-                UsageEvents.Event.ACTIVITY_PAUSED, UsageEvents.Event.ACTIVITY_STOPPED -> {
-                    val set = resumed[pkg]
-                    set?.remove(cls)
-                    if (set.isNullOrEmpty()) close(pkg, t)
-                }
-                UsageEvents.Event.SCREEN_NON_INTERACTIVE, UsageEvents.Event.KEYGUARD_SHOWN,
-                UsageEvents.Event.DEVICE_SHUTDOWN -> {
-                    openSince.keys.toList().forEach { close(it, t) }
-                    resumed.clear()
+            fun close(pkg: String, at: Long) {
+                val s = openSince.remove(pkg) ?: return
+                if (at > s) closed += Interval(pkg, s, at)
+            }
+
+            while (events.hasNextEvent()) {
+                events.getNextEvent(event)
+                val pkg = event.packageName ?: continue
+                val cls = event.className ?: ""
+                val t = event.timeStamp
+                when (event.eventType) {
+                    UsageEvents.Event.ACTIVITY_RESUMED -> {
+                        resumed.getOrPut(pkg) { HashSet() }.add(cls)
+                        if (pkg !in openSince) openSince[pkg] = t
+                    }
+                    UsageEvents.Event.ACTIVITY_PAUSED, UsageEvents.Event.ACTIVITY_STOPPED -> {
+                        val set = resumed[pkg]
+                        set?.remove(cls)
+                        if (set.isNullOrEmpty()) close(pkg, t)
+                    }
+                    UsageEvents.Event.SCREEN_NON_INTERACTIVE, UsageEvents.Event.KEYGUARD_SHOWN,
+                    UsageEvents.Event.DEVICE_SHUTDOWN -> {
+                        openSince.keys.toList().forEach { close(it, t) }
+                        resumed.clear()
+                    }
                 }
             }
+            lastEnd = now
         }
-        openSince.keys.toList().forEach { close(it, now) }
-        out
+        true
     } catch (e: Exception) {
-        null
+        false
     }
 
     /** Aralıkların birleşimi (çakışan süreler bir kez sayılır), [cut] aralıkları çıkarılarak. */

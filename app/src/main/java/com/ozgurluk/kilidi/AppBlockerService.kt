@@ -27,6 +27,7 @@ class AppBlockerService : AccessibilityService() {
 
     private val handler = Handler(Looper.getMainLooper())
     private var lastBounceAt = 0L
+    private var lastSettingsToastAt = 0L
 
     /** Ekranda en son öne gelen "gerçek" uygulama (klavye, bildirim paneli vb. hariç). */
     private var foregroundPkg: String? = null
@@ -187,8 +188,8 @@ class AppBlockerService : AccessibilityService() {
 
         Log.d(TAG, "Ayarlar ekranı engellendi: $reason")
         performGlobalAction(GLOBAL_ACTION_BACK)
-        if (now - lastBounceAt > 1500L) {
-            lastBounceAt = now
+        if (now - lastSettingsToastAt > 1500L) {
+            lastSettingsToastAt = now
             Toast.makeText(this, "Koruma sürerken bu ayar açılamaz ($reason).", Toast.LENGTH_SHORT).show()
         }
     }
@@ -340,6 +341,10 @@ class AppBlockerService : AccessibilityService() {
         val now = SystemClock.elapsedRealtime()
         if (now - lastBounceAt < BOUNCE_DEBOUNCE_MS) return
         lastBounceAt = now
+
+        // Önce ana ekrana dön: yasak uygulama hemen önden çekilir. Bazı telefonlarda (HyperOS)
+        // arka plandan etkinlik başlatmak gecikebildiği için kilit ekranı bunun ardından açılır.
+        performGlobalAction(GLOBAL_ACTION_HOME)
 
         val lockIntent = Intent(this, MainActivity::class.java).addFlags(
             Intent.FLAG_ACTIVITY_NEW_TASK or

@@ -296,31 +296,70 @@ object LockSettings {
      * yoksa Erişilebilirlik servisinin kendi ölçümüne düşer.
      */
     fun usageSecondsToday(context: Context, today: LocalDate = LocalDate.now()): Long {
-        if (today == LocalDate.now()) {
-            val now = android.os.SystemClock.elapsedRealtime()
-            if (usageCacheDate == today && now - usageCacheAt < USAGE_CACHE_MS) return usageCache
-            SystemUsage.limitedSecondsToday(context, limitExcludedPackages(context))?.let {
-                usageCache = it; usageCacheAt = now; usageCacheDate = today
-                return it
-            }
+        if (today != LocalDate.now()) return fallbackUsageSeconds(context, today)
+        val latched = if (isLimitReachedToday(context)) DAILY_LIMIT_SECONDS else 0L
+        if (!ActivityStore.hasUsageAccess(context)) {
+            return maxOf(latched, fallbackUsageSeconds(context, today))
         }
-        return fallbackUsageSeconds(context, today)
+        // Kilit kararı bekletilmesin: son hesaplanan değer hemen döner, sistem kayıtları arka
+        // planda okunur.
+        val now = android.os.SystemClock.elapsedRealtime()
+        val fresh = usageCacheDate == today && now - usageCacheAt < USAGE_CACHE_MS
+        if (!fresh) refreshUsageAsync(context.applicationContext)
+        val value = if (usageCacheDate == today) usageCache else fallbackUsageSeconds(context, today)
+        return maxOf(latched, value)
     }
 
-    // Servis bu değeri 2 saniyede bir sorar; sistem kayıtları birkaç saniyede bir okunur.
-    private const val USAGE_CACHE_MS = 5_000L
+    private fun refreshUsageAsync(app: Context) {
+        if (usageRefreshing) return
+        usageRefreshing = true
+        usageWorker.execute {
+            try {
+                val today = LocalDate.now()
+                SystemUsage.limitedSecondsToday(app, limitExcludedPackages(app))?.let {
+                    usageCache = it
+                    usageCacheDate = today
+                    usageCacheAt = android.os.SystemClock.elapsedRealtime()
+                    if (it >= DAILY_LIMIT_SECONDS) markLimitReachedToday(app)
+                }
+            } finally {
+                usageRefreshing = false
+            }
+        }
+    }
+
+    // Servis bu değeri 2 saniyede bir sorar; sistem kayıtları arka planda birkaç saniyede bir okunur.
+    private const val USAGE_CACHE_MS = 4_000L
+    private val usageWorker = java.util.concurrent.Executors.newSingleThreadExecutor()
+    @Volatile private var usageRefreshing = false
     @Volatile private var usageCache = 0L
     @Volatile private var usageCacheAt = 0L
     @Volatile private var usageCacheDate: LocalDate? = null
 
+    // Sınır o gün bir kez dolduysa bu kaydedilir; kilit kararı artık hesap beklemez ve
+    // uygulama yeniden başlasa da kilit hemen geçerli olur.
+    private const val KEY_LIMIT_REACHED_DATE = "limit_reached_date"
+
+    fun isLimitReachedToday(context: Context): Boolean =
+        prefs(context).getString(KEY_LIMIT_REACHED_DATE, null) == LocalDate.now().toString()
+
+    private fun markLimitReachedToday(context: Context) {
+        if (!isLimitReachedToday(context)) {
+            prefs(context).edit { putString(KEY_LIMIT_REACHED_DATE, LocalDate.now().toString()) }
+        }
+    }
+
     /** Ayar değişince (serbest liste, mola) sayaç hemen yeniden hesaplansın. */
     fun invalidateUsage() {
         usageCacheAt = 0L
+        excludedCacheAt = 0L
         SystemUsage.invalidate()
     }
 
     /** 2 saat sayacına hiç girmeyen paketler: serbest liste, ana ekran, sistem ekranları. */
     fun limitExcludedPackages(context: Context): Set<String> {
+        val now = android.os.SystemClock.elapsedRealtime()
+        excludedCache?.let { if (now - excludedCacheAt < EXCLUDED_CACHE_MS) return it }
         val set = HashSet<String>()
         set += allowedApps(context)
         set += context.packageName
@@ -336,8 +375,14 @@ object LockSettings {
         } catch (e: Exception) {
             // izin/servis yoksa yalnızca yukarıdakiler hariç tutulur
         }
+        excludedCache = set
+        excludedCacheAt = now
         return set
     }
+
+    private const val EXCLUDED_CACHE_MS = 30_000L
+    @Volatile private var excludedCache: Set<String>? = null
+    @Volatile private var excludedCacheAt = 0L
 
     /** Erişilebilirlik servisinin kendi ölçtüğü süre (kullanım erişimi yoksa yedek). */
     private fun fallbackUsageSeconds(context: Context, today: LocalDate): Long {
@@ -355,6 +400,9 @@ object LockSettings {
             putString(KEY_USAGE_DATE, today.toString())
             putLong(KEY_USAGE_SECONDS, total)
         }
+        if (total >= DAILY_LIMIT_SECONDS && !ActivityStore.hasUsageAccess(context)) {
+            markLimitReachedToday(context)
+        }
     }
 
     fun remainingUsageSeconds(context: Context): Long =
@@ -363,8 +411,8 @@ object LockSettings {
     /** Günlük sınır doldu ve mola saatinde değiliz: telefon kilitli olmalı. */
     fun isAddictLocked(context: Context): Boolean =
         isAddictModeOn(context) &&
-            usageSecondsToday(context) >= DAILY_LIMIT_SECONDS &&
-            !isInBreak(context)
+            !isInBreak(context) &&
+            (isLimitReachedToday(context) || usageSecondsToday(context) >= DAILY_LIMIT_SECONDS)
 
     /** Zamanlayıcı penceresi ya da günlük sınır yüzünden şu an kilit ekranı mı gösterilmeli? */
     fun shouldLockNow(context: Context): Boolean =
