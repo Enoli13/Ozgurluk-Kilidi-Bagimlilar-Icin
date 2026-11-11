@@ -39,13 +39,24 @@ jobs:
           echo "TAG=$TAG" >> "$GITHUB_ENV"
           echo "APK_NAME=OzgurlukKilidi-BagimlilarIcin-$TAG.apk" >> "$GITHUB_ENV"
 
-      - name: APK derle
+      - name: APK derle (kalıcı anahtarla imzalı)
+        env:
+          SIGNING_PASSWORD: ${{ secrets.SIGNING_PASSWORD }}
         run: |
+          if [ -z "$SIGNING_PASSWORD" ]; then
+            echo "::error::SIGNING_PASSWORD sırrı eksik. Repo → Settings → Secrets and variables → Actions'tan ekle; aksi halde APK güncelleme olarak kurulamaz."
+            exit 1
+          fi
           chmod +x gradlew
-          ./gradlew --no-daemon assembleDebug
+          ./gradlew --no-daemon assembleRelease
+
+      - name: İmzayı doğrula
+        run: |
+          APKSIGNER=$(ls "$ANDROID_HOME"/build-tools/*/apksigner | sort -V | tail -1)
+          "$APKSIGNER" verify --print-certs app/build/outputs/apk/release/app-release.apk | grep -i "SHA-256"
 
       - name: APK'yı adlandır
-        run: cp app/build/outputs/apk/debug/app-debug.apk "$APK_NAME"
+        run: cp app/build/outputs/apk/release/app-release.apk "$APK_NAME"
 
       - uses: actions/upload-artifact@v4
         with:

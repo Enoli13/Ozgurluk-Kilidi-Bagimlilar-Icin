@@ -31,6 +31,9 @@ class AppBlockerService : AccessibilityService() {
     /** Ekranda en son öne gelen "gerçek" uygulama (klavye, bildirim paneli vb. hariç). */
     private var foregroundPkg: String? = null
 
+    /** Paket yükleyicide hangi ekranın açık olduğu (kurulum serbest, kaldırma engelli). */
+    private var foregroundClass: String? = null
+
     /** Kullanım sayacı: son ölçüm anı ve henüz kaydedilmemiş milisaniyeler. */
     private var lastMeasureAt = 0L
     private var pendingUsageMs = 0L
@@ -98,6 +101,7 @@ class AppBlockerService : AccessibilityService() {
         // Uygulama değişmeden önce o ana kadarki süreyi eski uygulamaya yaz.
         measureUsage()
         foregroundPkg = pkg
+        foregroundClass = className
         if (pkg in SETTINGS_PACKAGES) {
             guardSettings(force = true)
             return
@@ -115,11 +119,18 @@ class AppBlockerService : AccessibilityService() {
         if (pkg == packageName) return false // kendi ekranımız
         // Ayarlar her zaman açılabilir; içindeki tehlikeli ekranları guardSettings() engeller.
         if (pkg in SETTINGS_PACKAGES) return false
-        // Koruma sürerken (takvimli gün ya da Bağımlılar İçin) kaldırma ekranı açılamaz.
-        if (pkg in INSTALLER_PACKAGES && LockSettings.isTamperProtected(this)) return true
+        // Paket yükleyici: güncelleme ve kurulum her zaman serbest (uygulamanın yeni sürümü
+        // kurulabilsin); koruma sürerken (takvimli gün ya da Bağımlılar İçin) yalnızca kaldırma
+        // ekranı açılamaz.
+        if (pkg in INSTALLER_PACKAGES) {
+            return LockSettings.isTamperProtected(this) && isUninstallScreen(foregroundClass)
+        }
         if (!LockSettings.shouldLockNow(this)) return false
         return pkg !in LockSettings.allowedApps(this) // seçilen serbest uygulamalar
     }
+
+    private fun isUninstallScreen(className: String?): Boolean =
+        className?.contains("uninstall", ignoreCase = true) == true
 
     // ---- Ayarlar: yalnızca kilidi kapatmaya yarayan ekranlar engellenir ----------------------
 
@@ -311,7 +322,7 @@ class AppBlockerService : AccessibilityService() {
 
     override fun onInterrupt() {}
 
-    private companion object {
+    companion object {
         const val TAG = "OzgurlukKilidi"
         const val BOUNCE_DEBOUNCE_MS = 400L
         const val WATCHDOG_INTERVAL_MS = 2_000L

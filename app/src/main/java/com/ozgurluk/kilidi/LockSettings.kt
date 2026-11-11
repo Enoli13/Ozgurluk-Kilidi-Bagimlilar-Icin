@@ -100,8 +100,10 @@ object LockSettings {
             .filter { isWhitelistable(it) }
             .toSet()
 
-    fun setAllowedApps(context: Context, apps: Set<String>) =
+    fun setAllowedApps(context: Context, apps: Set<String>) {
         prefs(context).edit { putStringSet(KEY_APPS, apps.filter { isWhitelistable(it) }.toSet()) }
+        invalidateUsage()
+    }
 
     /** Eski sürümlerin şifre verilerini cihazdan siler. */
     fun clearLegacyPasswordData(context: Context) = prefs(context).edit {
@@ -267,11 +269,15 @@ object LockSettings {
 
     fun breakEndMinutes(context: Context): Int = prefs(context).getInt(KEY_BREAK_END, NOT_SET)
 
-    fun setBreakStartMinutes(context: Context, minutes: Int) =
+    fun setBreakStartMinutes(context: Context, minutes: Int) {
         prefs(context).edit { putInt(KEY_BREAK_START, minutes) }
+        invalidateUsage()
+    }
 
-    fun setBreakEndMinutes(context: Context, minutes: Int) =
+    fun setBreakEndMinutes(context: Context, minutes: Int) {
         prefs(context).edit { putInt(KEY_BREAK_END, minutes) }
+        invalidateUsage()
+    }
 
     /** Şu an mola saat aralığında mıyız? (her gün geçerli, gece yarısını aşabilir) */
     fun isInBreak(context: Context, now: Calendar = Calendar.getInstance()): Boolean {
@@ -282,8 +288,59 @@ object LockSettings {
         return if (start < end) m in start until end else (m >= start || m < end)
     }
 
-    /** Bugün serbest olmayan uygulamalarda geçen süre (saniye). */
+    /**
+     * Bugün serbest olmayan uygulamalarda geçen süre (saniye), mola saatleri hariç.
+     *
+     * Kullanım erişimi verildiyse Android'in kendi kayıtlarından (Dijital Denge ile aynı kaynak)
+     * hesaplanır; böylece uygulama açılmadan / kurulmadan önceki kullanım da sayılır. Erişim
+     * yoksa Erişilebilirlik servisinin kendi ölçümüne düşer.
+     */
     fun usageSecondsToday(context: Context, today: LocalDate = LocalDate.now()): Long {
+        if (today == LocalDate.now()) {
+            val now = android.os.SystemClock.elapsedRealtime()
+            if (usageCacheDate == today && now - usageCacheAt < USAGE_CACHE_MS) return usageCache
+            SystemUsage.limitedSecondsToday(context, limitExcludedPackages(context))?.let {
+                usageCache = it; usageCacheAt = now; usageCacheDate = today
+                return it
+            }
+        }
+        return fallbackUsageSeconds(context, today)
+    }
+
+    // Servis bu değeri 2 saniyede bir sorar; sistem kayıtları birkaç saniyede bir okunur.
+    private const val USAGE_CACHE_MS = 5_000L
+    @Volatile private var usageCache = 0L
+    @Volatile private var usageCacheAt = 0L
+    @Volatile private var usageCacheDate: LocalDate? = null
+
+    /** Ayar değişince (serbest liste, mola) sayaç hemen yeniden hesaplansın. */
+    fun invalidateUsage() {
+        usageCacheAt = 0L
+        SystemUsage.invalidate()
+    }
+
+    /** 2 saat sayacına hiç girmeyen paketler: serbest liste, ana ekran, sistem ekranları. */
+    fun limitExcludedPackages(context: Context): Set<String> {
+        val set = HashSet<String>()
+        set += allowedApps(context)
+        set += context.packageName
+        set += SystemUsage.launcherPackages(context)
+        set += AppBlockerService.ALWAYS_ALLOWED
+        set += AppBlockerService.SETTINGS_PACKAGES
+        set += AppBlockerService.INSTALLER_PACKAGES
+        try {
+            context.getSystemService(android.telecom.TelecomManager::class.java)
+                ?.defaultDialerPackage?.let { set += it }
+            context.getSystemService(android.view.inputmethod.InputMethodManager::class.java)
+                ?.enabledInputMethodList?.forEach { set += it.packageName }
+        } catch (e: Exception) {
+            // izin/servis yoksa yalnızca yukarıdakiler hariç tutulur
+        }
+        return set
+    }
+
+    /** Erişilebilirlik servisinin kendi ölçtüğü süre (kullanım erişimi yoksa yedek). */
+    private fun fallbackUsageSeconds(context: Context, today: LocalDate): Long {
         val p = prefs(context)
         return if (p.getString(KEY_USAGE_DATE, null) == today.toString()) {
             p.getLong(KEY_USAGE_SECONDS, 0L)
@@ -293,7 +350,7 @@ object LockSettings {
     /** Sayaca süre ekler; gün değiştiyse sayaç önce sıfırlanır. */
     fun addUsageSeconds(context: Context, seconds: Long, today: LocalDate = LocalDate.now()) {
         if (seconds <= 0) return
-        val total = usageSecondsToday(context, today) + seconds
+        val total = fallbackUsageSeconds(context, today) + seconds
         prefs(context).edit {
             putString(KEY_USAGE_DATE, today.toString())
             putLong(KEY_USAGE_SECONDS, total)

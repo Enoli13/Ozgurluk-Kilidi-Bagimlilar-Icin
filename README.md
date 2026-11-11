@@ -38,7 +38,7 @@ Ana ekrandaki **5 · Bağımlılar İçin** kartından kurulur:
 Nasıl çalışır:
 
 - **Serbest uygulamalar** (2. karttaki liste) hiç sayılmaz. Ana ekran, klavye, arama ve alarm ekranları da sayılmaz.
-- Geri kalan tüm uygulamalarda geçen süre, **ekran açık ve telefon kilidi açıkken** toplanır.
+- Geri kalan tüm uygulamalarda geçen süre, telefonun **kullanım kayıtlarından (Dijital Denge)** okunur; o gün uygulamayı açmadan önceki kullanım da dahildir.
 - Günlük toplam **2 saati** geçince telefon **mola saatleri dışında** kilitlenir: yalnızca serbest uygulamalar açılabilir.
 - Kilit, **mola saati başlayınca** ya da **gece yarısı** sayaç sıfırlanınca kalkar. Sınıra 10 dakika kala uyarı gösterilir.
 - Tarih dolana kadar mod **kapatılamaz**, mola saatleri ve serbest liste **değiştirilemez**, uygulama **silinemez**.
@@ -68,9 +68,15 @@ Kilit ekranında özlü söz yerine **bugünkü etkinlik grafiği** gösterilir:
 - Bir çubuğa dokununca süresini (saat + dakika), adını ve emojisini düzenleyebilir ya da silebilirsin.
 - **+ Ekle** ile istediğin kadar yeni etkinlik eklersin (ad, emoji, renk).
 - Süreler her gece yarısı sıfırlanır.
-- Telefon süresinin Android'in kendi kayıtlarından (Dijital Denge ile aynı kaynak) gelmesi için **1 · İzinler** kartındaki **Kullanım erişimi** iznini ver. İzin verilmezse uygulama ekranın açık kaldığı süreyi kendisi ölçer.
+- Telefon süresi ve "Bağımlılar İçin" 2 saat sayacı Android'in kendi kullanım kayıtlarından (Dijital Denge ile aynı kaynak) okunur; uygulama açılmadan önceki kullanım da sayılır. Bunun için **1 · İzinler** kartındaki **Kullanım erişimi** iznini ver (mod başlatılırken zorunludur). İzin yoksa uygulama süreyi yaklaşık olarak kendisi ölçer.
 
 **Widget:** Ana ekranda boş bir yere uzun bas → **Widget'lar** → **Özgürlük Kilidi: Bağımlılar İçin** → **Etkinlik grafiği**. Widget'ta bir çubuğa dokununca düzenleme penceresi açılır, sağ üstteki **+** ile yeni etkinlik eklenir. Telefon çubuğu widget'tan da değiştirilemez.
+
+## 🔄 Güncelleme
+
+v1.2'den itibaren her sürüm aynı kalıcı anahtarla imzalanır. Yeni APK'yı [Releases](https://github.com/Enoli13/Ozgurluk-Kilidi-Bagimlilar-Icin/releases/latest) sayfasından (ya da uygulamadaki **Güncellemeleri kontrol et** düğmesinden) indirip kurduğunda uygulama silinmeden güncellenir; ayarlar ve süren "Bağımlılar İçin" modu korunur. Koruma sürerken paket yükleyicinin kurulum ekranı açılabilir, yalnızca kaldırma ekranı engellidir.
+
+> v1.0 ve v1.1 geçici anahtarlarla imzalandığı için v1.2 onların üstüne kurulamaz; bir kereliğine eski sürümü kaldırıp yeniden kurmak gerekir.
 
 ## ⚙️ Nasıl çalışır?
 

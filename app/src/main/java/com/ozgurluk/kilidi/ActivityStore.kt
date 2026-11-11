@@ -1,18 +1,13 @@
 package com.ozgurluk.kilidi
 
 import android.app.AppOpsManager
-import android.app.usage.UsageEvents
-import android.app.usage.UsageStatsManager
 import android.content.Context
-import android.content.Intent
 import android.content.SharedPreferences
-import android.content.pm.PackageManager
 import android.os.Process
 import androidx.core.content.edit
 import org.json.JSONArray
 import org.json.JSONObject
 import java.time.LocalDate
-import java.time.ZoneId
 
 /**
  * Günlük etkinlik paneli (kitap, telefon, ders, gitar, spor ve kullanıcının eklediği diğerleri).
@@ -144,6 +139,7 @@ object ActivityStore {
 
     fun hasUsageAccess(context: Context): Boolean {
         val ops = context.getSystemService(AppOpsManager::class.java) ?: return false
+        @Suppress("DEPRECATION")
         val mode = ops.unsafeCheckOpNoThrow(
             AppOpsManager.OPSTR_GET_USAGE_STATS, Process.myUid(), context.packageName
         )
@@ -156,59 +152,9 @@ object ActivityStore {
      * kendi ölçümünden hesaplanır.
      */
     fun phoneMinutesToday(context: Context): Long =
-        (if (hasUsageAccess(context)) systemScreenSeconds(context) else null)
+        SystemUsage.screenSecondsToday(context)
             ?.div(60)
             ?: (fallbackScreenSeconds(context) / 60)
-
-    @Suppress("DEPRECATION")
-    private fun systemScreenSeconds(context: Context): Long? = try {
-        val usm = context.getSystemService(UsageStatsManager::class.java)
-        val start = LocalDate.now().atStartOfDay(ZoneId.systemDefault()).toInstant().toEpochMilli()
-        val now = System.currentTimeMillis()
-        val launchers = launcherPackages(context)
-        val events = usm.queryEvents(start, now)
-        val event = UsageEvents.Event()
-        var current: String? = null
-        var currentStart = 0L
-        var total = 0L
-        while (events.hasNextEvent()) {
-            events.getNextEvent(event)
-            val pkg = event.packageName
-            when (event.eventType) {
-                UsageEvents.Event.MOVE_TO_FOREGROUND -> {
-                    if (current != null) total += event.timeStamp - currentStart
-                    if (pkg in launchers) {
-                        current = null
-                    } else {
-                        current = pkg
-                        currentStart = event.timeStamp
-                    }
-                }
-                UsageEvents.Event.MOVE_TO_BACKGROUND -> if (pkg == current) {
-                    total += event.timeStamp - currentStart
-                    current = null
-                }
-                UsageEvents.Event.SCREEN_NON_INTERACTIVE, UsageEvents.Event.KEYGUARD_SHOWN -> {
-                    if (current != null) total += event.timeStamp - currentStart
-                    current = null
-                }
-            }
-        }
-        if (current != null) total += now - currentStart
-        total / 1000
-    } catch (e: Exception) {
-        null
-    }
-
-    @Suppress("DEPRECATION")
-    private fun launcherPackages(context: Context): Set<String> = try {
-        val intent = Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_HOME)
-        context.packageManager.queryIntentActivities(intent, PackageManager.MATCH_DEFAULT_ONLY)
-            .map { it.activityInfo.packageName }
-            .toSet()
-    } catch (e: Exception) {
-        emptySet()
-    }
 
     private fun fallbackScreenSeconds(context: Context): Long {
         val p = prefs(context)

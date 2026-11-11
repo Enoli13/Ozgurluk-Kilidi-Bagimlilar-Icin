@@ -7,6 +7,7 @@ import android.content.ActivityNotFoundException
 import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
+import android.net.Uri
 import android.content.pm.PackageManager
 import android.content.pm.ResolveInfo
 import android.content.res.ColorStateList
@@ -288,6 +289,15 @@ class MainActivity : AppCompatActivity() {
         }
 
         btnAddict.setOnClickListener { startAddictMode() }
+
+        findViewById<TextView>(R.id.tvVersion).text = "Sürüm ${appVersionName()} · ayarlar ve kilit güncellemede korunur"
+        findViewById<MaterialButton>(R.id.btnUpdate).setOnClickListener {
+            try {
+                startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(RELEASES_URL)))
+            } catch (e: ActivityNotFoundException) {
+                toast("Tarayıcı bulunamadı: $RELEASES_URL", long = true)
+            }
+        }
 
         chartActivities.onColumnClick = { entry ->
             ActivityDialogs.showEdit(this, entry.category.id, ::onActivitiesChanged)
@@ -673,8 +683,13 @@ class MainActivity : AppCompatActivity() {
         val limit = LockSettings.DAILY_LIMIT_SECONDS
         tvAddictUsage.text = if (LockSettings.isAddictModeOn(this)) {
             val breakText = if (LockSettings.isInBreak(this)) "\nŞu an mola saatindesin, süre sayılmıyor." else ""
+            val source = if (ActivityStore.hasUsageAccess(this)) {
+                "\nSüre telefonun kullanım kayıtlarından (Dijital Denge) okunuyor."
+            } else {
+                "\n⚠ Kullanım erişimi verilmedi: süre yaklaşık hesaplanıyor. 1. karttan izni ver."
+            }
             "Bugün: ${formatHms(used.coerceAtMost(limit))} / ${formatHms(limit)}" +
-                " · Kalan ${formatHms(LockSettings.remainingUsageSeconds(this))}$breakText"
+                " · Kalan ${formatHms(LockSettings.remainingUsageSeconds(this))}$breakText$source"
         } else {
             "Günlük sınır: 2 saat (serbest uygulamalar hariç)"
         }
@@ -700,6 +715,10 @@ class MainActivity : AppCompatActivity() {
         }
         if (!isAccessibilityServiceEnabled(this, AppBlockerService::class.java)) {
             toast("Önce 1. adımdaki Erişilebilirlik servisini aç.")
+            return
+        }
+        if (!ActivityStore.hasUsageAccess(this)) {
+            toast("Önce 1. adımdaki \"Kullanım erişimi\" iznini ver; süre buradan okunuyor.", long = true)
             return
         }
         val until = LockSettings.addictUntil(this)
@@ -825,6 +844,12 @@ class MainActivity : AppCompatActivity() {
         }
         val nextDay = if (end <= start) " (ertesi gün)" else ""
         return "$dayText · ${formatClock(start)} – ${formatClock(end)}$nextDay"
+    }
+
+    private fun appVersionName(): String = try {
+        packageManager.getPackageInfo(packageName, 0).versionName ?: "?"
+    } catch (e: Exception) {
+        "?"
     }
 
     // ---- Etkinlik paneli ---------------------------------------------------------------------
@@ -974,5 +999,6 @@ class MainActivity : AppCompatActivity() {
 
     private companion object {
         const val GRID_COLUMNS = 3
+        const val RELEASES_URL = "https://github.com/Enoli13/Ozgurluk-Kilidi-Bagimlilar-Icin/releases/latest"
     }
 }
