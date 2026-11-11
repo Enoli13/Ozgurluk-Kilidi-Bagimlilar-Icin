@@ -11,6 +11,7 @@ import android.os.SystemClock
 import android.telecom.TelecomManager
 import android.util.Log
 import android.view.accessibility.AccessibilityEvent
+import android.view.accessibility.AccessibilityNodeInfo
 import android.view.inputmethod.InputMethodManager
 import android.widget.Toast
 
@@ -36,6 +37,13 @@ class AppBlockerService : AccessibilityService() {
     private var warnedDate: String? = null
     private var launcherPkgs: Set<String> = emptySet()
 
+    /** Telefon süresi yedeği (kullanım erişimi yoksa) ve widget yenileme zamanlaması. */
+    private var pendingScreenMs = 0L
+    private var lastWidgetUpdateAt = 0L
+
+    /** Ayarlar ekranı taramasının sıklık sınırı. */
+    private var lastSettingsScanAt = 0L
+
     /**
      * Pencere olayları yalnızca uygulama değişince gelir. Kilit saati başladığında yasaklı bir
      * uygulama zaten açıksa hiçbir olay gelmez; bu denetleyici o durumu da yakalar.
@@ -44,7 +52,9 @@ class AppBlockerService : AccessibilityService() {
         override fun run() {
             AddictGuard.expireIfDone(this@AppBlockerService)
             measureUsage()
+            refreshWidgetIfDue()
             foregroundPkg?.let { pkg ->
+                if (pkg in SETTINGS_PACKAGES && isUserLooking()) guardSettings(force = true)
                 if (isUserLooking() && shouldBlock(pkg)) {
                     Log.d(TAG, "Engellendi (zaten açıktı): $pkg")
                     bringLockScreenToFront()
@@ -70,8 +80,15 @@ class AppBlockerService : AccessibilityService() {
     }
 
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
-        if (event == null || event.eventType != AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED) return
+        if (event == null) return
         val pkg = event.packageName?.toString() ?: return
+
+        // Ayarlar içindeki gezinti (alt sayfalar) çoğu zaman yalnızca içerik değişimi olarak gelir.
+        if (event.eventType == AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED) {
+            if (pkg in SETTINGS_PACKAGES && pkg == foregroundPkg) guardSettings(force = false)
+            return
+        }
+        if (event.eventType != AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED) return
         val className = event.className?.toString()
 
         // Klavye, izin diyalogları, bildirim paneli gibi pencereler altta açık olan uygulamanın
@@ -81,15 +98,14 @@ class AppBlockerService : AccessibilityService() {
         // Uygulama değişmeden önce o ana kadarki süreyi eski uygulamaya yaz.
         measureUsage()
         foregroundPkg = pkg
+        if (pkg in SETTINGS_PACKAGES) {
+            guardSettings(force = true)
+            return
+        }
         if (shouldBlock(pkg)) {
             Log.d(TAG, "Engellendi: $pkg ($className)")
-            if (pkg in TAMPER_PACKAGES && !LockSettings.shouldLockNow(this)) {
-                val msg = if (LockSettings.isAddictModeOn(this)) {
-                    "\"Bağımlılar İçin\" modu sürerken Ayarlar açılamaz."
-                } else {
-                    "Kilit kapatılamaz günlerde Ayarlar açılamaz."
-                }
-                Toast.makeText(this, msg, Toast.LENGTH_SHORT).show()
+            if (pkg in INSTALLER_PACKAGES && !LockSettings.shouldLockNow(this)) {
+                Toast.makeText(this, "Koruma sürerken uygulama kaldırılamaz.", Toast.LENGTH_SHORT).show()
             }
             bringLockScreenToFront()
         }
@@ -97,12 +113,78 @@ class AppBlockerService : AccessibilityService() {
 
     private fun shouldBlock(pkg: String): Boolean {
         if (pkg == packageName) return false // kendi ekranımız
-        // Takvimle kapatılamaz günlerde ve "Bağımlılar İçin" modu boyunca kilit saatleri dışında
-        // da Ayarlar ve uygulama kaldırma ekranı açılamaz; aksi halde Erişilebilirlik servisi ya
-        // da cihaz yöneticiliği kapatılarak kilit aşılabilirdi.
-        if (pkg in TAMPER_PACKAGES && LockSettings.isTamperProtected(this)) return true
+        // Ayarlar her zaman açılabilir; içindeki tehlikeli ekranları guardSettings() engeller.
+        if (pkg in SETTINGS_PACKAGES) return false
+        // Koruma sürerken (takvimli gün ya da Bağımlılar İçin) kaldırma ekranı açılamaz.
+        if (pkg in INSTALLER_PACKAGES && LockSettings.isTamperProtected(this)) return true
         if (!LockSettings.shouldLockNow(this)) return false
         return pkg !in LockSettings.allowedApps(this) // seçilen serbest uygulamalar
+    }
+
+    // ---- Ayarlar: yalnızca kilidi kapatmaya yarayan ekranlar engellenir ----------------------
+
+    /**
+     * Ayarlar açıkken ekrandaki yazılara bakar. Koruma sürüyorsa ve ekran bu uygulamanın
+     * Erişilebilirlik / uygulama bilgisi / izin sayfası, cihaz yöneticisi, tarih-saat, fabrika
+     * ayarlarına sıfırlama ya da USB hata ayıklama ekranıysa bir önceki sayfaya geri döner.
+     */
+    private fun guardSettings(force: Boolean) {
+        if (!LockSettings.isTamperProtected(this)) return
+        val now = SystemClock.elapsedRealtime()
+        if (!force && now - lastSettingsScanAt < SETTINGS_SCAN_MIN_MS) return
+        lastSettingsScanAt = now
+
+        val root = try { rootInActiveWindow } catch (e: Exception) { null } ?: return
+        if (root.packageName?.toString() !in SETTINGS_PACKAGES) return
+        val text = StringBuilder()
+        collectText(root, text, intArrayOf(0))
+        val screen = normalize(text.toString())
+        val reason = dangerReason(screen) ?: return
+
+        Log.d(TAG, "Ayarlar ekranı engellendi: $reason")
+        performGlobalAction(GLOBAL_ACTION_BACK)
+        if (now - lastBounceAt > 1500L) {
+            lastBounceAt = now
+            Toast.makeText(this, "Koruma sürerken bu ayar açılamaz ($reason).", Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    private fun collectText(node: AccessibilityNodeInfo?, out: StringBuilder, count: IntArray) {
+        if (node == null || count[0] > MAX_SCAN_NODES) return
+        count[0]++
+        node.text?.let { out.append(it).append('\n') }
+        node.contentDescription?.let { out.append(it).append('\n') }
+        for (i in 0 until node.childCount) collectText(node.getChild(i), out, count)
+    }
+
+    private fun dangerReason(screen: String): String? {
+        val myLabel = normalize(applicationInfo.loadLabel(packageManager).toString())
+        val mentionsMe = screen.contains(myLabel) || screen.contains("bagimlilar icin") ||
+            screen.contains(normalize("Bağımlılar İçin"))
+        if (mentionsMe) {
+            // Kullanım erişimi henüz verilmediyse o sayfa açık kalsın (telefon süresi için).
+            val usagePage = USAGE_ACCESS_WORDS.any { screen.contains(it) }
+            if (usagePage && !ActivityStore.hasUsageAccess(this)) return null
+            if (DEVICE_ADMIN_WORDS.any { screen.contains(it) }) return "cihaz yöneticisi"
+            if (APP_PAGE_WORDS.any { screen.contains(it) }) return "uygulama ayarları"
+        }
+        if (DATE_TIME_WORDS.any { screen.contains(it) }) return "tarih ve saat"
+        if (RESET_WORDS.any { screen.contains(it) }) return "sıfırlama"
+        if (DEBUG_WORDS.any { screen.contains(it) }) return "geliştirici seçenekleri"
+        return null
+    }
+
+    // ---- Etkinlik paneli: widget ve telefon süresi yedeği --------------------------------------
+
+    private fun refreshWidgetIfDue() {
+        val now = SystemClock.elapsedRealtime()
+        if (!isUserLooking() || now - lastWidgetUpdateAt < WIDGET_REFRESH_MS) return
+        lastWidgetUpdateAt = now
+        try {
+            ActivityWidget.updateAll(this)
+        } catch (e: Exception) {
+            Log.w(TAG, "Widget güncellenemedi", e)
+        }
     }
 
     // ---- Bağımlılar İçin: kullanım sayacı -------------------------------------------------------
@@ -114,8 +196,15 @@ class AppBlockerService : AccessibilityService() {
         val delta = (now - lastMeasureAt).coerceIn(0L, MAX_MEASURE_GAP_MS)
         lastMeasureAt = now
         val pkg = foregroundPkg
-        if (pkg != null && isUserLooking() && countsTowardLimit(pkg)) {
+        val looking = isUserLooking()
+        if (pkg != null && looking && countsTowardLimit(pkg)) {
             pendingUsageMs += delta
+        }
+        if (looking && pkg != null && pkg !in launcherPkgs) pendingScreenMs += delta
+        if (pendingScreenMs >= FLUSH_EVERY_MS) {
+            val s = pendingScreenMs / 1000L
+            pendingScreenMs -= s * 1000L
+            ActivityStore.addFallbackScreenSeconds(this, s)
         }
         flushUsage(force = false)
     }
@@ -151,7 +240,7 @@ class AppBlockerService : AccessibilityService() {
         if (!LockSettings.isAddictModeOn(this)) return false
         if (LockSettings.isInBreak(this)) return false // mola saatleri sayılmaz
         if (pkg == packageName) return false
-        if (pkg in ALWAYS_ALLOWED || pkg in TAMPER_PACKAGES) return false
+        if (pkg in ALWAYS_ALLOWED || pkg in SETTINGS_PACKAGES || pkg in INSTALLER_PACKAGES) return false
         if (pkg in launcherPkgs) return false // ana ekran
         if (pkg in inputMethodPackages() || pkg == defaultDialerPackage()) return false
         return pkg !in LockSettings.allowedApps(this)
@@ -230,13 +319,49 @@ class AppBlockerService : AccessibilityService() {
         const val FLUSH_EVERY_MS = 15_000L
         const val WARN_BEFORE_SECONDS = 10 * 60L
 
-        /** Kilidi kapatmaya / uygulamayı kaldırmaya yarayan ekranlar. */
-        val TAMPER_PACKAGES = setOf(
+        /** Türkçe/İngilizce büyük-küçük harf farklarını yok sayarak karşılaştırma için. */
+        fun normalize(t: String): String =
+            t.replace('İ', 'i').replace('I', 'i').lowercase(java.util.Locale.ROOT)
+                .replace("i\u0307", "i").replace('ı', 'i')
+
+        const val SETTINGS_SCAN_MIN_MS = 600L
+        const val MAX_SCAN_NODES = 600
+        const val WIDGET_REFRESH_MS = 60_000L
+
+        /** Ayarlar uygulamaları: açılabilir, yalnızca tehlikeli ekranları engellenir. */
+        val SETTINGS_PACKAGES = setOf(
             "com.android.settings",
             "com.miui.securitycenter",
+            "com.samsung.android.lool"
+        )
+
+        /** Uygulama kaldırma ekranları: koruma sürerken hiç açılamaz. */
+        val INSTALLER_PACKAGES = setOf(
             "com.android.packageinstaller",
             "com.google.android.packageinstaller"
         )
+
+        // Ekran yazılarında aranan ifadeler; karşılaştırma büyük-küçük harf ve ı/i farkını yok sayar.
+        /** Bu uygulamanın adıyla birlikte görünürse: uygulama bilgisi, erişilebilirlik, izinler. */
+        val APP_PAGE_WORDS = listOf(
+            "kaldır", "uninstall", "durmaya zorla", "zorla durdur", "force stop",
+            "devre dışı", "disable", "kullan", "use ", "kısayol", "shortcut",
+            "izin", "permission", "verileri temizle", "depolama", "storage", "clear data",
+            "usage access", "display over", "üstünde göster", "üzerinde göster"
+        ).map { normalize(it) }
+        val USAGE_ACCESS_WORDS = listOf("kullanım erişimi", "kullanım verilerine erişim", "usage access", "usage data access").map { normalize(it) }
+        val DEVICE_ADMIN_WORDS = listOf(
+            "cihaz yönetici", "device admin", "yönetici uygulama"
+        ).map { normalize(it) }
+        val DATE_TIME_WORDS = listOf(
+            "otomatik tarih", "tarihi ayarla", "saati ayarla", "saati otomatik", "ağ tarafından sağlanan",
+            "set time automatically", "automatic date", "set date", "use network-provided time"
+        ).map { normalize(it) }
+        val RESET_WORDS = listOf(
+            "fabrika verilerine", "fabrika ayarlarına", "tüm verileri sil",
+            "factory data reset", "factory reset", "erase all data"
+        ).map { normalize(it) }
+        val DEBUG_WORDS = listOf("usb hata ayıklama", "usb debugging", "kablosuz hata ayıklama", "wireless debugging").map { normalize(it) }
 
         /**
          * Kilit sırasında da çalışması gereken sistem yardımcıları.

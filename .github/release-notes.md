@@ -1,13 +1,16 @@
-## Özgürlük Kilidi: Bağımlılar İçin v1.0
+## Özgürlük Kilidi: Bağımlılar İçin v1.1
 
-[Özgürlük Kilidi](https://github.com/Enoli13/Ozgurluk-Kilidi-Freedom-Lock)'nin fork'u. Zamanlayıcı, serbest uygulamalar ve takvim özellikleri aynen duruyor; üstüne **Bağımlılar İçin** modu eklendi.
+### Yeni: Günlük etkinlik paneli
+- Kilit ekranında özlü sözün yerine **bugünkü etkinlik grafiği** var: 📖 Kitap, 📱 Telefon, 🎓 Ders, 🎸 Elektro gitar, 🏋️ Spor.
+- **Telefon süresi sistemden otomatik gelir** ve elle değiştirilemez. En doğru sonuç için 1. adımdaki **Kullanım erişimi** iznini ver (verilmezse uygulama kendi ölçümünü kullanır).
+- Diğer çubuklara dokunarak süresini, adını ve ikonunu düzenleyebilir, silebilirsin.
+- **+ Ekle** ile panele istediğin kadar yeni etkinlik (ad, emoji, renk) ekleyebilirsin.
+- Süreler her gece yarısı sıfırlanır.
 
-### Yeni: Bağımlılar İçin modu
-- **Günlük 2 saat sınırı:** Serbest listedeki uygulamalar sayılmaz. Geri kalan uygulamalarda günde toplam 2 saati geçince telefon kilitlenir; yalnızca serbest uygulamalar, arama ve alarm açık kalır.
-- **Mola saatleri:** Belirlediğin saat aralığında her şey serbesttir ve bu süre sayaca eklenmez. Sınır dolmuşsa kilit mola saati gelince ya da gece yarısı (sayaç sıfırlanınca) kalkar.
-- **Tarih dolana kadar kapatılamaz:** Seçtiğin tarih (o gün dahil) bitene kadar mod durdurulamaz, ayarları ve serbest liste değiştirilemez.
-- **Silinemez:** Uygulama cihaz yöneticisi olur; mod sürerken Ayarlar ve kaldırma ekranları açılmadığı için silinemez. Tarih dolunca yöneticilik kendiliğinden kalkar.
-- **Uyarı:** Sınıra 10 dakika kala bildirim gösterilir.
+### Yeni: Ana ekran widget'ı
+- Aynı grafik ana ekranda widget olarak kullanılabilir (uzun bas → Widget'lar → Bağımlılar İçin).
+- Widget'tan bir çubuğa dokununca süresi düzenlenir, **+** ile yeni etkinlik eklenir. Telefon çubuğu değiştirilemez.
 
-### Kurulum
-APK'yı indirip kur. Paket adı farklı olduğu için asıl Özgürlük Kilidi ile yan yana kurulabilir.
+### Değişiklikler
+- **Özlü sözler kaldırıldı.**
+- **Ayarlar artık açılabilir.** Koruma sürerken yalnızca kilidi aşmaya yarayan ekranlar engellenir: bu uygulamanın uygulama bilgisi / Erişilebilirlik / izin sayfaları, cihaz yöneticisi, tarih-saat, fabrika ayarlarına sıfırlama ve USB hata ayıklama. Uygulama kaldırma ekranı yine açılmaz.

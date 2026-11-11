@@ -59,7 +59,9 @@ class MainActivity : AppCompatActivity() {
     private lateinit var btnAddict: MaterialButton
     private lateinit var tvLockEnds: TextView
     private lateinit var tvLockCommit: TextView
-    private lateinit var tvQuote: TextView
+    private lateinit var chartActivities: ChartView
+    private lateinit var btnAddActivity: MaterialButton
+    private lateinit var btnUsage: MaterialButton
     private lateinit var tvSelectedApps: TextView
     private lateinit var tvNoApps: TextView
     private lateinit var tvCommitInfo: TextView
@@ -116,19 +118,6 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    private val quotesLibrary = arrayOf(
-        "Benim Soyumun Asaleti Benimle Başlayacak\n— Napolyon",
-        "Zorluklar, başarının değerini artıran süslerdir.\n— Molière",
-        "Yarınlar yorgun ve bezgin kimselere değil, rahatını terk edebilen gayretli insanlara aittir.\n— Cicero",
-        "Aklın gücü, çalışmakla gelişir.\n— Leonardo da Vinci",
-        "Gelecek, bugünden ona hazırlananlara aittir.\n— Malcolm X",
-        "En büyük zaferimiz hiç düşmemek değil, her düştüğümüzde kalkabilmektir.\n— Konfüçyüs",
-        "Bin millik yolculuk tek bir adımla başlar.\n— Lao Tzu",
-        "Biz ne yaptığımızı tekrar tekrar yapan varlıklarız. Mükemmellik bir eylem değil, alışkanlıktır.\n— Will Durant",
-        "Hayatta en hakiki mürşit ilimdir.\n— Mustafa Kemal Atatürk",
-        "Dikkatini nereye verirsen, hayatın oraya akar."
-    )
-
     private val dayShortNames = mapOf(
         Calendar.MONDAY to "Pzt", Calendar.TUESDAY to "Sal", Calendar.WEDNESDAY to "Çar",
         Calendar.THURSDAY to "Per", Calendar.FRIDAY to "Cum", Calendar.SATURDAY to "Cmt",
@@ -167,7 +156,9 @@ class MainActivity : AppCompatActivity() {
         btnAddict = findViewById(R.id.btnAddict)
         tvLockEnds = findViewById(R.id.tvLockEnds)
         tvLockCommit = findViewById(R.id.tvLockCommit)
-        tvQuote = findViewById(R.id.tvQuote)
+        chartActivities = findViewById(R.id.chartActivities)
+        btnAddActivity = findViewById(R.id.btnAddActivity)
+        btnUsage = findViewById(R.id.btnUsagePermission)
         tvSelectedApps = findViewById(R.id.tvSelectedApps)
         tvNoApps = findViewById(R.id.tvNoApps)
         tvCommitInfo = findViewById(R.id.tvCommitInfo)
@@ -298,13 +289,26 @@ class MainActivity : AppCompatActivity() {
 
         btnAddict.setOnClickListener { startAddictMode() }
 
-        tvQuote.setOnClickListener { tvQuote.text = nextQuote() }
+        chartActivities.onColumnClick = { entry ->
+            ActivityDialogs.showEdit(this, entry.category.id, ::onActivitiesChanged)
+        }
+        btnAddActivity.setOnClickListener {
+            ActivityDialogs.showAdd(this, ::onActivitiesChanged)
+        }
+
+        btnUsage.setOnClickListener {
+            if (ActivityStore.hasUsageAccess(this)) {
+                toast("Kullanım erişimi zaten verilmiş.")
+            } else {
+                openSettings(Intent(Settings.ACTION_USAGE_ACCESS_SETTINGS))
+            }
+        }
     }
 
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         setIntent(intent)
-        // Kilit ekranı yeniden öne getirildi: yeni bir özlü söz seçilsin.
+        // Kilit ekranı yeniden öne getirildi: panel baştan çizilsin.
         lockUiShown = false
     }
 
@@ -335,7 +339,7 @@ class MainActivity : AppCompatActivity() {
         val locking = LockSettings.shouldLockNow(this)
 
         if (locking) {
-            if (!lockUiShown) tvQuote.text = nextQuote()
+            refreshActivities()
             layoutSettings.visibility = View.GONE
             layoutLockContainer.visibility = View.VISIBLE
             val addictLock = !timerLocking()
@@ -378,6 +382,7 @@ class MainActivity : AppCompatActivity() {
         val accessibilityOk = isAccessibilityServiceEnabled(this, AppBlockerService::class.java)
         bindPermissionButton(btnOverlay, overlayOk, "Üstte gösterim izni")
         bindPermissionButton(btnAccessibility, accessibilityOk, "Erişilebilirlik servisi")
+        bindPermissionButton(btnUsage, ActivityStore.hasUsageAccess(this), "Kullanım erişimi")
 
         // Seçili uygulamalar
         val allowed = queryLauncherApps(LockSettings.allowedApps(this))
@@ -483,6 +488,8 @@ class MainActivity : AppCompatActivity() {
         val locking = LockSettings.shouldLockNow(this)
 
         if (!lockUiShown) updateAddictUsage()
+        // Telefon süresi kilit ekranında dakikada bir yenilensin.
+        else if (System.currentTimeMillis() / 1000L % 60L == 0L) refreshActivities()
 
         when {
             // Süre doldu (00:00:00): kilit ekranını kapat, engelleme zaten kendiliğinden durur.
@@ -725,7 +732,7 @@ class MainActivity : AppCompatActivity() {
             append("⚠ Bu tarihe kadar:\n")
             append("• Mod hiçbir şekilde kapatılamaz.\n")
             append("• Uygulama silinemez.\n")
-            append("• Telefonun Ayarlar uygulaması açılamaz (Wi-Fi, ses gibi hızlı ayarlar bildirim panelinden kullanılabilir).\n")
+            append("• Ayarlar'ı kullanabilirsin; ama bu uygulamanın sayfaları, Erişilebilirlik, cihaz yöneticisi, tarih-saat ve sıfırlama ekranları açılmaz.\n")
             append("• Serbest uygulama listesi değiştirilemez.\n\n")
             append("Arama ekranı, acil aramalar ve alarm her zaman çalışır.")
         }
@@ -820,9 +827,15 @@ class MainActivity : AppCompatActivity() {
         return "$dayText · ${formatClock(start)} – ${formatClock(end)}$nextDay"
     }
 
-    private fun nextQuote(): String {
-        val current = tvQuote.text?.toString()
-        return quotesLibrary.filter { it != current }.random()
+    // ---- Etkinlik paneli ---------------------------------------------------------------------
+
+    private fun refreshActivities() {
+        chartActivities.entries = ActivityStore.entries(this)
+    }
+
+    private fun onActivitiesChanged() {
+        refreshActivities()
+        ActivityWidget.updateAll(this)
     }
 
     // ---- Serbest uygulamalar --------------------------------------------------------------------
