@@ -342,9 +342,9 @@ class AppBlockerService : AccessibilityService() {
         if (now - lastBounceAt < BOUNCE_DEBOUNCE_MS) return
         lastBounceAt = now
 
-        // Önce ana ekrana dön: yasak uygulama hemen önden çekilir. Bazı telefonlarda (HyperOS)
-        // arka plandan etkinlik başlatmak gecikebildiği için kilit ekranı bunun ardından açılır.
-        performGlobalAction(GLOBAL_ACTION_HOME)
+        // Not: Burada "ana ekrana dön" (GLOBAL_ACTION_HOME) KULLANILMAZ. Kilit sürerken ana ekran
+        // da yasak sayıldığı için sonsuz döngüye girer; ayrıca Android ana ekran hareketinden
+        // sonra arka plandan etkinlik açmayı birkaç saniye geciktirir ve kilit ekranı açılamaz.
 
         val lockIntent = Intent(this, MainActivity::class.java).addFlags(
             Intent.FLAG_ACTIVITY_NEW_TASK or
