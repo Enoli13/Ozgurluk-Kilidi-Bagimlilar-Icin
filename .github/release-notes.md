@@ -1,12 +1,24 @@
-## Özgürlük Kilidi: Bağımlılar İçin v1.5
+## Özgürlük Kilidi: Bağımlılar İçin v1.6
 
-### Acil düzeltme: kilit ekranı açılamıyordu
-- v1.4'te yasak bir uygulama açılınca önce ana ekrana dönülüyordu. Kilit sürerken ana ekran da yasak sayıldığı için bu sonsuz bir döngüye giriyordu ve kilit ekranı (uygulamanın kendisi) "açılıyor gibi yapıp" hiç açılmıyordu. Bu adım kaldırıldı.
-- v1.4'teki asıl düzeltme (kullanım kayıtlarının arka planda hızlı okunması ve günlük sınırın anında devreye girmesi) korunuyor.
+### Yeni: serbest listeye bilgisayardan uygulama ekleme
+Mod sürerken serbest liste telefondan değiştirilemez. Unuttuğun bir uygulamayı eklemek için artık **USB ile bağlı bilgisayardan** komut gönderebilirsin. Bu komutu telefondaki hiçbir uygulama gönderemez; kilit anlık bir dürtüyle telefondan aşılamaz.
+
+Paket adını bul:
+```
+adb shell pm list packages | grep -iE "trendyol|hepsiburada|amazon"
+```
+
+Ekle (virgülle birden fazla):
+```
+adb shell am broadcast -a com.ozgurluk.kilidi.bagimli.SERBEST_EKLE -n com.ozgurluk.kilidi.bagimli/com.ozgurluk.kilidi.AdbWhitelistReceiver --es paketler "paket1,paket2"
+```
+
+Çıkar: eylemi `com.ozgurluk.kilidi.bagimli.SERBEST_CIKAR` yap.
+
+Sosyal medya uygulamaları bu yolla da serbest yapılamaz.
 
 ### Kurulum
-Kilit sürerken tarayıcı açılamayacağı için en kolay yol bilgisayardan kurmak:
 ```
-adb install -r OzgurlukKilidi-BagimlilarIcin-v1.5.apk
+adb install -r OzgurlukKilidi-BagimlilarIcin-v1.6.apk
 ```
 Uygulama silinmeden güncellenir; ayarların ve süren mod korunur.
