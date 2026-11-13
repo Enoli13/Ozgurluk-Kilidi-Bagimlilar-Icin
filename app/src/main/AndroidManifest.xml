@@ -56,20 +56,6 @@
                 android:resource="@xml/accessibility_service_config" />
         </service>
 
-        <!--
-            Serbest listeye yalnızca bilgisayardan (adb) ekleme/çıkarma. DUMP izni yalnızca adb
-            kabuğunda ve sistemde vardır; telefondaki hiçbir uygulama bu yayını gönderemez.
-        -->
-        <receiver
-            android:name=".AdbWhitelistReceiver"
-            android:exported="true"
-            android:permission="android.permission.DUMP">
-            <intent-filter>
-                <action android:name="com.ozgurluk.kilidi.bagimli.SERBEST_EKLE" />
-                <action android:name="com.ozgurluk.kilidi.bagimli.SERBEST_CIKAR" />
-            </intent-filter>
-        </receiver>
-
         <!-- Widget'tan açılan düzenleme penceresi -->
         <activity
             android:name=".EditActivityActivity"
