@@ -43,6 +43,7 @@ class AppBlockerService : AccessibilityService() {
 
     /** Telefon süresi yedeği (kullanım erişimi yoksa) ve widget yenileme zamanlaması. */
     private var pendingScreenMs = 0L
+    private val pendingLinkedMs = HashMap<String, Long>()
     private var lastWidgetUpdateAt = 0L
 
     /** Ayarlar ekranı taramasının sıklık sınırı. */
@@ -140,6 +141,7 @@ class AppBlockerService : AccessibilityService() {
             return LockSettings.isTamperProtected(this) && isUninstallScreen(foregroundClass)
         }
         if (!LockSettings.shouldLockNow(this)) return false
+        if (LinkedApps.isLinked(pkg)) return false // Anki ve Perde her zaman serbest
         return pkg !in LockSettings.allowedApps(this) // seçilen serbest uygulamalar
     }
 
@@ -245,11 +247,24 @@ class AppBlockerService : AccessibilityService() {
         if (pkg != null && looking && countsTowardLimit(pkg)) {
             pendingUsageMs += delta
         }
-        if (looking && pkg != null && pkg !in launcherPkgs) pendingScreenMs += delta
+        val linkedCategory = pkg?.let { LinkedApps.categoryFor(it) }
+        if (looking && pkg != null && linkedCategory != null) {
+            // Anki / Perde: telefon süresine değil ders / gitar çubuğuna yazılır.
+            pendingLinkedMs[linkedCategory] = (pendingLinkedMs[linkedCategory] ?: 0L) + delta
+        } else if (looking && pkg != null && pkg !in launcherPkgs) {
+            pendingScreenMs += delta
+        }
         if (pendingScreenMs >= FLUSH_EVERY_MS) {
             val s = pendingScreenMs / 1000L
             pendingScreenMs -= s * 1000L
             ActivityStore.addFallbackScreenSeconds(this, s)
+        }
+        pendingLinkedMs.entries.forEach { e ->
+            if (e.value >= FLUSH_EVERY_MS) {
+                val s = e.value / 1000L
+                e.setValue(e.value - s * 1000L)
+                ActivityStore.addFallbackLinkedSeconds(this, e.key, s)
+            }
         }
         flushUsage(force = false)
     }
@@ -285,6 +300,7 @@ class AppBlockerService : AccessibilityService() {
         if (!LockSettings.isAddictModeOn(this)) return false
         if (LockSettings.isInBreak(this)) return false // mola saatleri sayılmaz
         if (pkg == packageName) return false
+        if (LinkedApps.isLinked(pkg)) return false // Anki → ders, Perde → gitar süresi
         if (pkg in ALWAYS_ALLOWED || pkg in SETTINGS_PACKAGES || pkg in INSTALLER_PACKAGES) return false
         if (pkg in launcherPkgs) return false // ana ekran
         if (pkg in inputMethodPackages() || pkg == defaultDialerPackage()) return false

@@ -13,6 +13,8 @@ import java.time.LocalDate
  * Günlük etkinlik paneli (kitap, telefon, ders, gitar, spor ve kullanıcının eklediği diğerleri).
  *
  * - "Telefon" çubuğu sistemden otomatik gelir ve elle değiştirilemez.
+ * - "Ders" AnkiDroid'de, "Elektro gitar" Perde'de geçen süreyi otomatik alır ([LinkedApps]);
+ *   kullanıcı bu çubuklara yalnızca otomatik sürenin üstüne ekleme yapabilir.
  * - Diğer süreleri kullanıcı kilit ekranından ya da ana ekran widget'ından düzenler.
  * - Süreler her gece yarısı sıfırlanır.
  */
@@ -51,6 +53,11 @@ object ActivityStore {
     private const val KEY_VALUES = "values"
     private const val KEY_SCREEN_DATE = "screen_date"
     private const val KEY_SCREEN_SECONDS = "screen_seconds"
+    private const val KEY_LINKED_DATE = "linked_date"
+    private const val KEY_LINKED_PREFIX = "linked_seconds_"
+
+    /** Bağlı çubuklarda elle eklenen fazlalık, değerler içinde bu önekle saklanır. */
+    private const val EXTRA_PREFIX = "extra_"
 
     private fun prefs(context: Context): SharedPreferences =
         context.applicationContext.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
@@ -65,8 +72,11 @@ object ActivityStore {
                 val o = arr.getJSONObject(i)
                 Category(o.getString("id"), o.getString("name"), o.getString("emoji"), o.getInt("color"))
             }
-            // Telefon çubuğu her zaman bulunur.
-            if (list.none { it.isPhone }) DEFAULTS.filter { it.isPhone } + list else list
+            // Telefon, Ders ve Gitar çubukları her zaman bulunur (süreleri otomatik gelir).
+            val missing = DEFAULTS.filter { d ->
+                (d.isPhone || LinkedApps.isLinkedCategory(d.id)) && list.none { it.id == d.id }
+            }
+            if (missing.isEmpty()) list else missing + list
         } catch (e: Exception) {
             DEFAULTS
         }
@@ -92,8 +102,11 @@ object ActivityStore {
         })
     }
 
+    /** Telefon, Ders ve Gitar çubukları silinemez. */
+    fun isDeletable(id: String): Boolean = id != PHONE_ID && !LinkedApps.isLinkedCategory(id)
+
     fun deleteCategory(context: Context, id: String) {
-        if (id == PHONE_ID) return
+        if (!isDeletable(id)) return
         saveCategories(context, categories(context).filter { it.id != id })
         val values = values(context)
         values.remove(id)
@@ -117,21 +130,86 @@ object ActivityStore {
         putString(KEY_VALUES, values.toString())
     }
 
+    /**
+     * Çubuğun bugünkü süresini ayarlar. Ders/Gitar çubuklarında [minutes] toplam süredir;
+     * Anki/Perde'den gelen süreden az olamaz, aradaki fark "elle eklenen" olarak saklanır.
+     */
     fun setMinutes(context: Context, id: String, minutes: Long) {
         if (id == PHONE_ID) return // telefon süresi sistemden gelir
         val values = values(context)
-        values.put(id, minutes.coerceIn(0L, 24 * 60L))
+        val total = minutes.coerceIn(0L, 24 * 60L)
+        if (LinkedApps.isLinkedCategory(id)) {
+            val auto = autoMinutes(context, id)
+            values.put(EXTRA_PREFIX + id, (total - auto).coerceAtLeast(0L))
+            values.remove(id) // eski sürümün elle girilen toplamı artık kullanılmaz
+        } else {
+            values.put(id, total)
+        }
         saveValues(context, values)
     }
 
-    fun minutes(context: Context, id: String): Long =
-        if (id == PHONE_ID) phoneMinutesToday(context) else values(context).optLong(id, 0L)
+    fun minutes(context: Context, id: String): Long = when {
+        id == PHONE_ID -> phoneMinutesToday(context)
+        LinkedApps.isLinkedCategory(id) -> {
+            val auto = autoMinutes(context, id)
+            auto + extraMinutes(values(context), id, auto)
+        }
+        else -> values(context).optLong(id, 0L)
+    }
 
     fun entries(context: Context): List<Entry> {
         val values = values(context)
         val phone = phoneMinutesToday(context)
         return categories(context).map {
-            Entry(it, if (it.isPhone) phone else values.optLong(it.id, 0L))
+            val m = when {
+                it.isPhone -> phone
+                LinkedApps.isLinkedCategory(it.id) -> {
+                    val auto = autoMinutes(context, it.id)
+                    auto + extraMinutes(values, it.id, auto)
+                }
+                else -> values.optLong(it.id, 0L)
+            }
+            Entry(it, m)
+        }
+    }
+
+    /**
+     * Bağlı çubukta elle eklenen fazlalık. Bu sürümden önce bugün elle bir toplam girildiyse
+     * o toplamın otomatik süreyi aşan kısmı fazlalık sayılır (çift sayılmasın).
+     */
+    private fun extraMinutes(values: JSONObject, id: String, auto: Long): Long =
+        if (values.has(EXTRA_PREFIX + id)) values.optLong(EXTRA_PREFIX + id, 0L)
+        else (values.optLong(id, 0L) - auto).coerceAtLeast(0L)
+
+    // ---- Anki / Perde süresi (sistemden) ----------------------------------------------------
+
+    /** Ders/Gitar çubuğunun bağlı uygulamadan bugün gelen süresi (dakika). */
+    fun autoMinutes(context: Context, id: String): Long {
+        val matcher = LinkedApps.matcherFor(id) ?: return 0L
+        val seconds = SystemUsage.packageSecondsToday(context, matcher)
+            ?: fallbackLinkedSeconds(context, id)
+        return seconds / 60
+    }
+
+    private fun fallbackLinkedSeconds(context: Context, id: String): Long {
+        val p = prefs(context)
+        return if (p.getString(KEY_LINKED_DATE, null) == LocalDate.now().toString()) {
+            p.getLong(KEY_LINKED_PREFIX + id, 0L)
+        } else 0L
+    }
+
+    /** Kullanım erişimi yoksa Erişilebilirlik servisi Anki/Perde süresini buraya ekler. */
+    fun addFallbackLinkedSeconds(context: Context, id: String, seconds: Long) {
+        if (seconds <= 0) return
+        val p = prefs(context)
+        val today = LocalDate.now().toString()
+        val fresh = p.getString(KEY_LINKED_DATE, null) != today
+        p.edit {
+            if (fresh) {
+                putString(KEY_LINKED_DATE, today)
+                p.all.keys.filter { it.startsWith(KEY_LINKED_PREFIX) }.forEach { remove(it) }
+            }
+            putLong(KEY_LINKED_PREFIX + id, (if (fresh) 0L else p.getLong(KEY_LINKED_PREFIX + id, 0L)) + seconds)
         }
     }
 

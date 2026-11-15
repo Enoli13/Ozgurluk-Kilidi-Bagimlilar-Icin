@@ -94,14 +94,26 @@ object LockSettings {
     fun setDays(context: Context, days: Set<Int>) =
         prefs(context).edit { putStringSet(KEY_DAYS, days.map { it.toString() }.toSet()) }
 
-    /** Serbest uygulamalar. Eski sürümlerde seçilmiş sosyal medya uygulamaları elenir. */
+    /**
+     * Serbest uygulamalar: kullanıcının seçtikleri + her zaman serbest olan Anki ve Perde
+     * ([LinkedApps]). Eski sürümlerde seçilmiş sosyal medya uygulamaları elenir.
+     */
     fun allowedApps(context: Context): Set<String> =
+        userAllowedApps(context) + LinkedApps.ALWAYS_ALLOWED
+
+    /** Yalnızca kullanıcının seçtiği serbest uygulamalar. */
+    fun userAllowedApps(context: Context): Set<String> =
         (prefs(context).getStringSet(KEY_APPS, emptySet()) ?: emptySet())
             .filter { isWhitelistable(it) }
             .toSet()
 
     fun setAllowedApps(context: Context, apps: Set<String>) {
-        prefs(context).edit { putStringSet(KEY_APPS, apps.filter { isWhitelistable(it) }.toSet()) }
+        prefs(context).edit {
+            putStringSet(
+                KEY_APPS,
+                apps.filter { isWhitelistable(it) && !LinkedApps.isLinked(it) }.toSet()
+            )
+        }
         invalidateUsage()
     }
 

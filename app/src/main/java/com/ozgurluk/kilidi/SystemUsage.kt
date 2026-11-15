@@ -133,12 +133,25 @@ object SystemUsage {
         return total
     }
 
-    /** Bugün ekranda geçen toplam süre (saniye); ana ekran hariç. Erişim yoksa null. */
+    /**
+     * Bugün ekranda geçen toplam süre (saniye); ana ekran ile Anki/Perde gibi bir etkinlik
+     * çubuğuna yazılan uygulamalar hariç. Erişim yoksa null.
+     */
     fun screenSecondsToday(context: Context): Long? {
         if (!ActivityStore.hasUsageAccess(context)) return null
         val list = intervals(context) ?: return null
         val launchers = launcherPackages(context)
-        return unionMillis(list.filter { it.pkg !in launchers }, emptyList()) / 1000
+        return unionMillis(
+            list.filter { it.pkg !in launchers && !LinkedApps.isLinked(it.pkg) },
+            emptyList()
+        ) / 1000
+    }
+
+    /** Bugün [matches] paketlerinde geçen toplam süre (saniye). Erişim yoksa null. */
+    fun packageSecondsToday(context: Context, matches: (String) -> Boolean): Long? {
+        if (!ActivityStore.hasUsageAccess(context)) return null
+        val list = intervals(context) ?: return null
+        return unionMillis(list.filter { matches(it.pkg) }, emptyList()) / 1000
     }
 
     /**
@@ -148,7 +161,7 @@ object SystemUsage {
     fun limitedSecondsToday(context: Context, excluded: Set<String>): Long? {
         if (!ActivityStore.hasUsageAccess(context)) return null
         val list = intervals(context) ?: return null
-        val counted = list.filter { it.pkg !in excluded }
+        val counted = list.filter { it.pkg !in excluded && !LinkedApps.isLinked(it.pkg) }
         return unionMillis(counted, breakRangesToday(context)) / 1000
     }
 

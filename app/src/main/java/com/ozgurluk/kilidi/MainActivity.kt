@@ -605,7 +605,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun confirmActivation() {
-        val appCount = LockSettings.allowedApps(this).size
+        val appCount = queryLauncherApps(LockSettings.allowedApps(this)).size
         val commit = commitSummary()
         val message = buildString {
             append(scheduleSummary())
@@ -691,7 +691,7 @@ class MainActivity : AppCompatActivity() {
             "Bugün: ${formatHms(used.coerceAtMost(limit))} / ${formatHms(limit)}" +
                 " · Kalan ${formatHms(LockSettings.remainingUsageSeconds(this))}$breakText$source"
         } else {
-            "Günlük sınır: 2 saat (serbest uygulamalar hariç)"
+            "Günlük sınır: 2 saat (serbest uygulamalar, Anki ve Perde hariç)"
         }
     }
 
@@ -741,7 +741,7 @@ class MainActivity : AppCompatActivity() {
             return
         }
 
-        val appCount = LockSettings.allowedApps(this).size
+        val appCount = queryLauncherApps(LockSettings.allowedApps(this)).size
         val message = buildString {
             append("Bitiş: ${until.format(dateFormat)} (o gün dahil)\n")
             append("Mola: ${breakText()}${if (be <= bs) " (ertesi gün)" else ""}\n")
@@ -938,7 +938,10 @@ class MainActivity : AppCompatActivity() {
 
     private fun showAppSelectionDialog() {
         // Sosyal medya uygulamaları (WhatsApp hariç) ve Ayarlar listede hiç görünmez.
-        val apps = queryLauncherApps().filter { LockSettings.isWhitelistable(it.packageName) }
+        // Anki ve Perde zaten her zaman serbest olduğu için listede gösterilmez.
+        val apps = queryLauncherApps().filter {
+            LockSettings.isWhitelistable(it.packageName) && !LinkedApps.isLinked(it.packageName)
+        }
         val names = apps.map { it.label }.toTypedArray()
 
         val alreadyAllowed = LockSettings.allowedApps(this)

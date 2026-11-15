@@ -43,6 +43,9 @@ object ActivityDialogs {
         }
 
         val current = ActivityStore.minutes(context, categoryId)
+        // Ders (Anki) / Gitar (Perde): otomatik gelen sürenin altına inilemez.
+        val linked = LinkedApps.isLinkedCategory(categoryId)
+        val auto = if (linked) ActivityStore.autoMinutes(context, categoryId) else 0L
         val dp = context.resources.displayMetrics.density
         val root = LinearLayout(context).apply {
             orientation = LinearLayout.VERTICAL
@@ -59,9 +62,19 @@ object ActivityDialogs {
             text = "Bugün ne kadar?"
             setPadding(0, (16 * dp).toInt(), 0, 0)
         })
+        if (linked) {
+            root.addView(TextView(context).apply {
+                text = "${LinkedApps.sourceName(categoryId)}'den otomatik: " +
+                    "${ActivityStore.formatMinutes(auto)}\n" +
+                    "Bunun üstüne ekleyebilirsin, altına indiremezsin."
+                textSize = 13f
+                alpha = 0.75f
+                setPadding(0, (4 * dp).toInt(), 0, 0)
+            })
+        }
 
         val hourPicker = NumberPicker(context).apply {
-            minValue = 0; maxValue = 23; value = (current / 60).toInt()
+            minValue = (auto / 60).toInt(); maxValue = 23; value = (current / 60).toInt()
         }
         val minuteValues = (0 until 60 step MINUTE_STEP).map { "%02d".format(it) }.toTypedArray()
         val minutePicker = NumberPicker(context).apply {
@@ -77,6 +90,7 @@ object ActivityDialogs {
             addView(TextView(context).apply { text = " dakika" })
         }
         root.addView(pickers)
+        val initialPicked = hourPicker.value * 60L + minutePicker.value * MINUTE_STEP
 
         MaterialAlertDialogBuilder(context)
             .setTitle("${category.emoji} ${category.name}")
@@ -85,19 +99,33 @@ object ActivityDialogs {
                 val name = nameInput.text.toString().trim().ifEmpty { category.name }
                 val emoji = emojiInput.text.toString().trim().ifEmpty { category.emoji }
                 ActivityStore.updateCategory(context, categoryId, name, emoji)
-                ActivityStore.setMinutes(
-                    context, categoryId,
-                    hourPicker.value * 60L + minutePicker.value * MINUTE_STEP
-                )
+                val picked = hourPicker.value * 60L + minutePicker.value * MINUTE_STEP
+                // Seçiciler 5 dakikalık adımla çalışır; süreye dokunulmadıysa olduğu gibi kalsın.
+                if (picked != initialPicked) {
+                    if (linked && picked < auto) {
+                        Toast.makeText(
+                            context,
+                            "${category.name} süresi ${LinkedApps.sourceName(categoryId)} süresinin " +
+                                "(${ActivityStore.formatMinutes(auto)}) altına indirilemez.",
+                            Toast.LENGTH_LONG
+                        ).show()
+                    }
+                    ActivityStore.setMinutes(context, categoryId, maxOf(picked, auto))
+                }
                 onChanged()
             }
-            .setNeutralButton("Sil", null) // tıklama aşağıda: onay penceresine geçer
+            .apply {
+                // Ders ve Gitar otomatik süre aldığı için silinemez.
+                if (ActivityStore.isDeletable(categoryId)) {
+                    setNeutralButton("Sil", null) // tıklama aşağıda: onay penceresine geçer
+                }
+            }
             .setNegativeButton("İptal", null)
             .create()
             .apply {
                 var deleting = false
                 setOnShowListener {
-                    getButton(DialogInterface.BUTTON_NEUTRAL).setOnClickListener {
+                    getButton(DialogInterface.BUTTON_NEUTRAL)?.setOnClickListener {
                         deleting = true
                         dismiss()
                         confirmDelete(context, category, onChanged, onDismiss)
