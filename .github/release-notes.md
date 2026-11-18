@@ -1,20 +1,14 @@
-## Özgürlük Kilidi: Bağımlılar İçin v1.8
+## Özgürlük Kilidi: Bağımlılar İçin v1.9
 
-### Yeni: AnkiDroid → Ders süresi
-- AnkiDroid'de (orijinali ve Odak çatalı) geçen süre artık **telefon süresine eklenmez**, otomatik olarak **Ders** çubuğuna yazılır.
-- Ders süresini elle yalnızca Anki'den gelen sürenin **üstüne** çıkarabilirsin; altına indiremezsin.
-- AnkiDroid her zaman serbesttir: kilitte açık kalır ve günlük 2 saate sayılmaz.
+### Düzeltme: Ses tuşu kilit ekranına atıyordu
+- Günlük 2 saat bittikten sonra ses açma/kısma tuşuna basınca açılan ses paneli (HyperOS'ta ayrı bir sistem paketinden geliyor) yasak uygulama sanılıyordu. Artık ses paneli, kontrol merkezi, açılır menüler ve diyaloglar gibi **uygulama ekranı olmayan pencereler** kilidi tetiklemiyor.
 
-### Yeni: Perde → Elektro gitar süresi
-- Perde uygulaması serbest listeye kalıcı olarak eklendi: kilitte açık kalır ve günlük 2 saate sayılmaz.
-- Perde'de geçen süre telefon süresine eklenmez, otomatik olarak **Elektro gitar** çubuğuna yazılır. Gitar süresi de yalnızca Perde süresinin üstüne çıkarılabilir.
-
-### Notlar
-- Ders ve Elektro gitar çubukları artık silinemez (daha önce silindiyse geri gelir).
-- Bugün bu sürümden önce elle girdiğin ders/gitar süresi kaybolmaz; Anki/Perde süresiyle çift sayılmaz.
+### Düzeltme: WhatsApp'ta fotoğraf gönderirken kilit ekranına atılma
+- WhatsApp gibi serbest bir uygulama fotoğraf eklemek için galeriyi, fotoğraf seçiciyi ya da kamerayı açtığında bu ekranlar artık o uygulamanın parçası sayılıyor; kilit ekranına atılmıyorsun ve bu süre 2 saate sayılmıyor.
+- Galeri ana ekrandan doğrudan açılırsa kilitli kalmaya devam ediyor; galeriden başka bir uygulamaya geçince izin bitiyor. Tarayıcılar ve sosyal medya uygulamaları bu izni hiçbir şekilde alamaz.
 
 ### Kurulum
 ```
-adb install -r OzgurlukKilidi-BagimlilarIcin-v1.8.apk
+adb install -r OzgurlukKilidi-BagimlilarIcin-v1.9.apk
 ```
 Uygulama silinmeden güncellenir; ayarların ve süren mod korunur.

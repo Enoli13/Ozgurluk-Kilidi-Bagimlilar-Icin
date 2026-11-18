@@ -2,12 +2,16 @@ package com.ozgurluk.kilidi
 
 import android.accessibilityservice.AccessibilityService
 import android.app.KeyguardManager
+import android.content.ComponentName
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Handler
 import android.os.Looper
+import android.net.Uri
+import android.os.Build
 import android.os.PowerManager
 import android.os.SystemClock
+import android.provider.MediaStore
 import android.telecom.TelecomManager
 import android.util.Log
 import android.view.accessibility.AccessibilityEvent
@@ -40,6 +44,18 @@ class AppBlockerService : AccessibilityService() {
     private var pendingUsageMs = 0L
     private var warnedDate: String? = null
     private var launcherPkgs: Set<String> = emptySet()
+
+    /**
+     * Fotoğraf seçici, galeri ve kamera uygulamaları. Serbest bir uygulamanın içinden (ör.
+     * WhatsApp'ta fotoğraf eklerken) açıldıklarında o uygulamanın parçası sayılırlar.
+     */
+    private var mediaPkgs: Set<String> = emptySet()
+
+    /** Şu an açık olan galeri/kamera hangi serbest uygulamadan açıldı (yoksa null). */
+    private var borrowHost: String? = null
+
+    /** "paket/sınıf" → bu pencere gerçek bir uygulama ekranı (Activity) mı? */
+    private val activityCache = HashMap<String, Boolean>()
 
     /** Telefon süresi yedeği (kullanım erişimi yoksa) ve widget yenileme zamanlaması. */
     private var pendingScreenMs = 0L
@@ -77,6 +93,7 @@ class AppBlockerService : AccessibilityService() {
     override fun onServiceConnected() {
         super.onServiceConnected()
         launcherPkgs = queryLauncherPackages()
+        mediaPkgs = queryMediaPackages()
         floatingGuard = FloatingGuard(this)
         lastMeasureAt = SystemClock.elapsedRealtime()
         if (LockSettings.isAddictModeOn(this)) AddictGuard.harden(this)
@@ -115,6 +132,7 @@ class AppBlockerService : AccessibilityService() {
 
         // Uygulama değişmeden önce o ana kadarki süreyi eski uygulamaya yaz.
         measureUsage()
+        updateBorrow(previous = foregroundPkg, pkg = pkg)
         foregroundPkg = pkg
         foregroundClass = className
         if (pkg in SETTINGS_PACKAGES) {
@@ -142,7 +160,80 @@ class AppBlockerService : AccessibilityService() {
         }
         if (!LockSettings.shouldLockNow(this)) return false
         if (LinkedApps.isLinked(pkg)) return false // Anki ve Perde her zaman serbest
+        if (isBorrowed(pkg)) return false // serbest uygulamanın açtığı galeri/kamera
         return pkg !in LockSettings.allowedApps(this) // seçilen serbest uygulamalar
+    }
+
+    // ---- Serbest uygulamanın açtığı galeri / kamera -------------------------------------------
+
+    /**
+     * WhatsApp gibi serbest bir uygulama fotoğraf eklemek için galeriyi, fotoğraf seçiciyi ya da
+     * kamerayı açarsa bu ekranlar o uygulamanın parçası sayılır. Galeri ana ekrandan doğrudan
+     * açılırsa yine kilitlidir; galeriden başka bir uygulamaya geçilince izin biter.
+     */
+    private fun updateBorrow(previous: String?, pkg: String) {
+        borrowHost = when {
+            pkg !in mediaPkgs -> null
+            borrowHost != null -> borrowHost // galeri → kamera → galeri zinciri
+            previous != null && previous != pkg && isFreeHost(previous) -> previous
+            else -> null
+        }
+    }
+
+    private fun isFreeHost(pkg: String): Boolean =
+        pkg in LockSettings.allowedApps(this) || LinkedApps.isLinked(pkg)
+
+    private fun isBorrowed(pkg: String): Boolean = borrowHost != null && pkg in mediaPkgs
+
+    /** Fotoğraf seçen / çeken / gösteren uygulamalar (tarayıcılar ve sosyal medya hariç). */
+    private fun queryMediaPackages(): Set<String> {
+        val intents = mutableListOf(
+            Intent(Intent.ACTION_PICK).setType("image/*"),
+            Intent(Intent.ACTION_GET_CONTENT).setType("image/*").addCategory(Intent.CATEGORY_OPENABLE),
+            Intent(Intent.ACTION_VIEW).setDataAndType(Uri.parse("content://media/external/images/media/1"), "image/*"),
+            Intent(MediaStore.ACTION_IMAGE_CAPTURE),
+            Intent(MediaStore.ACTION_VIDEO_CAPTURE)
+        )
+        if (Build.VERSION.SDK_INT >= 33) intents += Intent(MediaStore.ACTION_PICK_IMAGES)
+        val found = HashSet<String>(KNOWN_MEDIA_PACKAGES)
+        for (intent in intents) found += resolvePackages(intent)
+        val browsers = resolvePackages(
+            Intent(Intent.ACTION_VIEW, Uri.parse("https://example.com")).addCategory(Intent.CATEGORY_BROWSABLE)
+        )
+        return found.filter {
+            it != packageName && it !in launcherPkgs && it !in browsers && LockSettings.isWhitelistable(it)
+        }.toSet()
+    }
+
+    @Suppress("DEPRECATION")
+    private fun resolvePackages(intent: Intent): Set<String> = try {
+        packageManager.queryIntentActivities(intent, PackageManager.MATCH_ALL)
+            .map { it.activityInfo.packageName }
+            .toSet()
+    } catch (e: Exception) {
+        emptySet()
+    }
+
+    /**
+     * Pencere gerçek bir uygulama ekranı (Activity) mı? Ses paneli, bildirimler, açılır
+     * menüler, diyaloglar gibi pencereler Activity değildir; bunlar ön plandaki uygulamayı
+     * değiştirmez ve kilit ekranına atmaz.
+     */
+    private fun isActivityWindow(pkg: String, className: String?): Boolean {
+        if (className.isNullOrEmpty()) return true // bilinmiyor: eski davranış
+        val key = "$pkg/$className"
+        activityCache[key]?.let { return it }
+        val result = try {
+            packageManager.getActivityInfo(ComponentName(pkg, className), 0)
+            true
+        } catch (e: PackageManager.NameNotFoundException) {
+            false
+        } catch (e: Exception) {
+            true
+        }
+        if (activityCache.size > 500) activityCache.clear()
+        activityCache[key] = result
+        return result
     }
 
     /**
@@ -301,6 +392,7 @@ class AppBlockerService : AccessibilityService() {
         if (LockSettings.isInBreak(this)) return false // mola saatleri sayılmaz
         if (pkg == packageName) return false
         if (LinkedApps.isLinked(pkg)) return false // Anki → ders, Perde → gitar süresi
+        if (isBorrowed(pkg)) return false // WhatsApp'ta fotoğraf seçmek sınıra sayılmaz
         if (pkg in ALWAYS_ALLOWED || pkg in SETTINGS_PACKAGES || pkg in INSTALLER_PACKAGES) return false
         if (pkg in launcherPkgs) return false // ana ekran
         if (pkg in inputMethodPackages() || pkg == defaultDialerPackage()) return false
@@ -330,6 +422,11 @@ class AppBlockerService : AccessibilityService() {
      */
     private fun isHelperWindow(pkg: String, className: String?): Boolean {
         if (pkg in ALWAYS_ALLOWED) return true
+        // Ayarlar ve paket yükleyici her zaman denetlenir (kaldırma ekranı vb.).
+        if (pkg in SETTINGS_PACKAGES || pkg in INSTALLER_PACKAGES) return false
+        // Ses paneli, açılır menü, diyalog gibi Activity olmayan pencereler (HyperOS'ta ses
+        // tuşuna basınca açılan panel dahil) ön plandaki uygulamayı değiştirmez.
+        if (!isActivityWindow(pkg, className)) return true
         // Klavye (IME) penceresi: sınıf adı ya da yüklü klavye paketlerinden biri
         if (className != null && className.startsWith("android.inputmethodservice.")) return true
         if (pkg in inputMethodPackages()) return true
@@ -438,6 +535,9 @@ class AppBlockerService : AccessibilityService() {
         val ALWAYS_ALLOWED = setOf(
             // Bildirim çubuğu, hızlı ayarlar, ses/güç menüsü, ekran görüntüsü
             "com.android.systemui",
+            // HyperOS / MIUI: ses paneli ve kontrol merkezi bu eklenti paketinden açılır
+            "miui.systemui.plugin",
+            "com.miui.systemui",
             // Sistem diyalogları ve paylaşım menüsü
             "android",
             "com.android.intentresolver",
@@ -465,6 +565,17 @@ class AppBlockerService : AccessibilityService() {
             "com.google.android.deskclock",
             "com.android.deskclock",
             "com.sec.android.app.clockpackage"
+        )
+
+        /**
+         * Galeri, fotoğraf seçici ve kamera paketleri. Yalnızca serbest bir uygulamanın içinden
+         * açılınca serbesttir (bkz. [updateBorrow]); bunlara yüklü uygulamalardan bulunanlar eklenir.
+         */
+        val KNOWN_MEDIA_PACKAGES = setOf(
+            "com.miui.gallery", "com.miui.mediaviewer", "com.android.camera",
+            "com.google.android.apps.photos", "com.google.android.GoogleCamera",
+            "com.sec.android.gallery3d", "com.sec.android.app.camera",
+            "com.android.gallery3d", "com.oplus.camera", "com.coloros.gallery3d"
         )
     }
 }
