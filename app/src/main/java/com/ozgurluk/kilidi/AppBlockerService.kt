@@ -16,6 +16,7 @@ import android.telecom.TelecomManager
 import android.util.Log
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
+import android.view.accessibility.AccessibilityWindowInfo
 import android.view.inputmethod.InputMethodManager
 import android.widget.Toast
 
@@ -79,6 +80,7 @@ class AppBlockerService : AccessibilityService() {
             measureUsage()
             refreshWidgetIfDue()
             updateFloating(force = true)
+            reconcileForeground()
             foregroundPkg?.let { pkg ->
                 if (pkg in SETTINGS_PACKAGES && isUserLooking()) guardSettings(force = true)
                 if (isUserLooking() && shouldBlock(pkg)) {
@@ -129,7 +131,14 @@ class AppBlockerService : AccessibilityService() {
 
         // Klavye, izin diyalogları, bildirim paneli gibi pencereler altta açık olan uygulamanın
         // "parçası" sayılır: ne engellenir ne de ön plandaki uygulama bilgisini değiştirir.
-        if (isHelperWindow(pkg, className)) return
+        if (isHelperWindow(pkg, className)) {
+            // Geri / son uygulamalar tuşuyla açık bir uygulamaya dönülünce olay bazen Activity
+            // olmayan bir sınıf adıyla gelir. Ekranda gerçekten hangi uygulamanın olduğuna bak.
+            if (reconcileForeground() && isUserLooking()) {
+                foregroundPkg?.let { if (shouldBlock(it)) bringLockScreenToFront() }
+            }
+            return
+        }
 
         // Uygulama değişmeden önce o ana kadarki süreyi eski uygulamaya yaz.
         measureUsage()
@@ -220,6 +229,36 @@ class AppBlockerService : AccessibilityService() {
      * menüler, diyaloglar gibi pencereler Activity değildir; bunlar ön plandaki uygulamayı
      * değiştirmez ve kilit ekranına atmaz.
      */
+    /**
+     * Ekranda gerçekten öndeki uygulama penceresinin paketi (pencere listesinden). Olaylar
+     * kaçırılsa ya da yanlış sınıf adıyla gelse bile kilidin atlatılmasını engeller.
+     */
+    private fun topAppPackage(): String? = try {
+        val apps = windows.filter { it.type == AccessibilityWindowInfo.TYPE_APPLICATION }
+        val top = apps.firstOrNull { it.isActive } ?: apps.firstOrNull { it.isFocused }
+            ?: apps.firstOrNull()
+        top?.root?.packageName?.toString()
+    } catch (e: Exception) {
+        null
+    }
+
+    /**
+     * Öndeki uygulama bilgisini ekrandaki gerçek pencereyle eşitler. Klavye ve arama ekranı
+     * öndeki uygulamayı değiştirmez. Değişiklik olduysa true döner.
+     */
+    private fun reconcileForeground(): Boolean {
+        val real = topAppPackage() ?: return false
+        if (real == foregroundPkg) return false
+        if (real in inputMethodPackages() || real == defaultDialerPackage()) return false
+        if (real in ALWAYS_ALLOWED) return false
+        measureUsage()
+        updateBorrow(previous = foregroundPkg, pkg = real)
+        foregroundPkg = real
+        foregroundClass = null
+        if (real in SETTINGS_PACKAGES) guardSettings(force = true)
+        return true
+    }
+
     private fun isActivityWindow(pkg: String, className: String?): Boolean {
         if (className.isNullOrEmpty()) return true // bilinmiyor: eski davranış
         val key = "$pkg/$className"
