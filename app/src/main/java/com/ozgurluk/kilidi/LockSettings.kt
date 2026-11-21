@@ -27,7 +27,7 @@ object LockSettings {
     private const val KEY_END = "end_minutes"
     private const val KEY_DAYS = "selected_days"
     private const val KEY_APPS = "whitelist_apps"
-    private const val KEY_METROLIST_ADDED = "metrolist_added_v1_10"
+    private const val KEY_METROLIST_DONE = "metrolist_added_pkgs"
     private const val METROLIST = "com.metrolist.music"
     private const val KEY_COMMIT_MODE = "commit_mode"
     private const val KEY_COMMIT_UNTIL = "commit_until"
@@ -120,18 +120,39 @@ object LockSettings {
     }
 
     /**
-     * v1.10: Metrolist serbest listeye bir kez eklenir (mod aktifken liste düzenlenemediği için).
-     * WhatsApp gibi normal bir serbest uygulama olur; mod bitince listeden çıkarılabilir.
+     * Metrolist serbest listeye eklenir (mod aktifken liste düzenlenemediği için güncellemeyle).
+     * Paket adı kuruluma göre değişebildiği için (F-Droid, IzzyOnDroid, çatallar) yüklü
+     * uygulamalar arasında adı "Metrolist" olan ya da paketi "com.metrolist" ile başlayanlar
+     * aranır. Her paket yalnızca bir kez eklenir; mod bitince listeden çıkarılırsa geri eklenmez.
      */
     fun addMetrolistOnce(context: Context) {
+        val found = findMetrolistPackages(context) + METROLIST
         val p = prefs(context)
-        if (p.getBoolean(KEY_METROLIST_ADDED, false)) return
-        val apps = (p.getStringSet(KEY_APPS, emptySet()) ?: emptySet()) + METROLIST
+        val done = p.getStringSet(KEY_METROLIST_DONE, emptySet()) ?: emptySet()
+        val toAdd = found - done
+        if (toAdd.isEmpty()) return
+        val apps = (p.getStringSet(KEY_APPS, emptySet()) ?: emptySet()) + toAdd
         p.edit {
             putStringSet(KEY_APPS, apps)
-            putBoolean(KEY_METROLIST_ADDED, true)
+            putStringSet(KEY_METROLIST_DONE, done + toAdd)
         }
         invalidateUsage()
+    }
+
+    private fun findMetrolistPackages(context: Context): Set<String> = try {
+        val pm = context.packageManager
+        val intent = android.content.Intent(android.content.Intent.ACTION_MAIN)
+            .addCategory(android.content.Intent.CATEGORY_LAUNCHER)
+        pm.queryIntentActivities(intent, 0)
+            .filter { ri ->
+                val pkg = ri.activityInfo.packageName
+                pkg.startsWith("com.metrolist") ||
+                    ri.loadLabel(pm).toString().contains("metrolist", ignoreCase = true)
+            }
+            .map { it.activityInfo.packageName }
+            .toSet()
+    } catch (e: Exception) {
+        emptySet()
     }
 
     /** Eski sürümlerin şifre verilerini cihazdan siler. */

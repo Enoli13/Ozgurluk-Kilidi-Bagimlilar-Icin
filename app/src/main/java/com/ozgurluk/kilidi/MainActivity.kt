@@ -325,6 +325,7 @@ class MainActivity : AppCompatActivity() {
 
     override fun onResume() {
         super.onResume()
+        LockSettings.addMetrolistOnce(this)
         if (AddictGuard.expireIfDone(this)) {
             toast("\"Bağımlılar İçin\" süresi doldu. Tebrikler, başardın!", long = true)
         }
