@@ -27,6 +27,8 @@ object LockSettings {
     private const val KEY_END = "end_minutes"
     private const val KEY_DAYS = "selected_days"
     private const val KEY_APPS = "whitelist_apps"
+    private const val KEY_METROLIST_ADDED = "metrolist_added_v1_10"
+    private const val METROLIST = "com.metrolist.music"
     private const val KEY_COMMIT_MODE = "commit_mode"
     private const val KEY_COMMIT_UNTIL = "commit_until"
     private const val KEY_COMMIT_DATES = "commit_dates"
@@ -113,6 +115,21 @@ object LockSettings {
                 KEY_APPS,
                 apps.filter { isWhitelistable(it) && !LinkedApps.isLinked(it) }.toSet()
             )
+        }
+        invalidateUsage()
+    }
+
+    /**
+     * v1.10: Metrolist serbest listeye bir kez eklenir (mod aktifken liste düzenlenemediği için).
+     * WhatsApp gibi normal bir serbest uygulama olur; mod bitince listeden çıkarılabilir.
+     */
+    fun addMetrolistOnce(context: Context) {
+        val p = prefs(context)
+        if (p.getBoolean(KEY_METROLIST_ADDED, false)) return
+        val apps = (p.getStringSet(KEY_APPS, emptySet()) ?: emptySet()) + METROLIST
+        p.edit {
+            putStringSet(KEY_APPS, apps)
+            putBoolean(KEY_METROLIST_ADDED, true)
         }
         invalidateUsage()
     }

@@ -134,6 +134,7 @@ class MainActivity : AppCompatActivity() {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_main)
         LockSettings.clearLegacyPasswordData(this)
+        LockSettings.addMetrolistOnce(this)
 
         // targetSdk 35+ uygulamalar sistem çubuklarının altına çizilir; içeriği çubukların dışına al.
         val rootLayout = findViewById<View>(R.id.rootLayout)

@@ -91,6 +91,7 @@ class AppBlockerService : AccessibilityService() {
     }
 
     override fun onServiceConnected() {
+        LockSettings.addMetrolistOnce(this)
         super.onServiceConnected()
         launcherPkgs = queryLauncherPackages()
         mediaPkgs = queryMediaPackages()
