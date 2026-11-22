@@ -76,23 +76,36 @@ class AppBlockerService : AccessibilityService() {
      */
     private val watchdog = object : Runnable {
         override fun run() {
-            AddictGuard.expireIfDone(this@AppBlockerService)
-            measureUsage()
-            refreshWidgetIfDue()
-            updateFloating(force = true)
-            reconcileForeground()
-            foregroundPkg?.let { pkg ->
-                if (pkg in SETTINGS_PACKAGES && isUserLooking()) guardSettings(force = true)
-                if (isUserLooking() && shouldBlock(pkg)) {
-                    Log.d(TAG, "Engellendi (zaten açıktı): $pkg")
-                    bringLockScreenToFront()
+            // Bir adımda hata çıksa bile denetleyici asla durmamalı; eskiden tek bir hata
+            // döngüyü kalıcı olarak öldürüyor ve sınır/mola bitince kilit devreye girmiyordu.
+            lastBeat = SystemClock.elapsedRealtime()
+            try {
+                AddictGuard.expireIfDone(this@AppBlockerService)
+                measureUsage()
+                refreshWidgetIfDue()
+                updateFloating(force = true)
+                reconcileForeground()
+                foregroundPkg?.let { pkg ->
+                    if (pkg in SETTINGS_PACKAGES && isUserLooking()) guardSettings(force = true)
+                    if (isUserLooking() && shouldBlock(pkg)) {
+                        Log.d(TAG, "Engellendi (zaten açıktı): $pkg")
+                        bringLockScreenToFront()
+                    }
                 }
+                if (++guardCheckCounter % 15 == 0) GuardService.ensureRunning(this@AppBlockerService)
+            } catch (e: Exception) {
+                Log.w(TAG, "Denetleyicide hata", e)
+            } finally {
+                handler.postDelayed(this, WATCHDOG_INTERVAL_MS)
             }
-            handler.postDelayed(this, WATCHDOG_INTERVAL_MS)
         }
     }
 
+    private var guardCheckCounter = 0
+
     override fun onServiceConnected() {
+        connected = true
+        lastBeat = SystemClock.elapsedRealtime()
         LockSettings.addMetrolistOnce(this)
         super.onServiceConnected()
         launcherPkgs = queryLauncherPackages()
@@ -102,9 +115,16 @@ class AppBlockerService : AccessibilityService() {
         if (LockSettings.isAddictModeOn(this)) AddictGuard.harden(this)
         handler.removeCallbacks(watchdog)
         handler.postDelayed(watchdog, WATCHDOG_INTERVAL_MS)
+        GuardService.ensureRunning(this)
+    }
+
+    override fun onUnbind(intent: Intent?): Boolean {
+        connected = false
+        return super.onUnbind(intent)
     }
 
     override fun onDestroy() {
+        connected = false
         flushUsage(force = true)
         floatingGuard?.clear()
         floatingGuard = null
@@ -336,6 +356,13 @@ class AppBlockerService : AccessibilityService() {
     }
 
     private fun dangerReason(screen: String): String? {
+        // Uygulamanın "Arka planda çalışma izinleri" düğmesiyle açılan otomatik başlatma / pil
+        // ekranları kısa bir süre açık kalabilir; bu sürede de durdurma, kaldırma, erişilebilirlik
+        // ve cihaz yöneticisi ekranları kapalı kalır.
+        if (LockSettings.isSetupWindowOpen() &&
+            SETUP_WORDS.any { screen.contains(it) } &&
+            SETUP_FORBIDDEN_WORDS.none { screen.contains(it) }
+        ) return null
         val myLabel = normalize(applicationInfo.loadLabel(packageManager).toString())
         val mentionsMe = screen.contains(myLabel) || screen.contains("bagimlilar icin") ||
             screen.contains(normalize("Bağımlılar İçin"))
@@ -515,6 +542,29 @@ class AppBlockerService : AccessibilityService() {
 
     companion object {
         const val TAG = "OzgurlukKilidi"
+
+        @Volatile private var connected = false
+        @Volatile private var lastBeat = 0L
+
+        /**
+         * Erişilebilirlik servisi gerçekten çalışıyor mu? Ayarlardaki "açık" bilgisi yetmez:
+         * HyperOS süreci öldürünce servis ayarlarda açık görünür ama hiç çalışmaz.
+         */
+        fun isAlive(): Boolean =
+            connected && SystemClock.elapsedRealtime() - lastBeat < 3 * WATCHDOG_INTERVAL_MS + 1_000L
+
+        /** Otomatik başlatma / pil ayarı ekranlarını tanımak için. */
+        val SETUP_WORDS = listOf(
+            "otomatik başlat", "autostart", "auto-start", "auto start",
+            "pil", "battery", "arka plan", "background", "kısıtlama yok", "no restrictions"
+        ).map { normalize(it) }
+
+        /** Kurulum penceresi açıkken bile engellenen ekranlar. */
+        val SETUP_FORBIDDEN_WORDS = listOf(
+            "durmaya zorla", "zorla durdur", "force stop", "kaldır", "uninstall",
+            "verileri temizle", "clear data", "erişilebilirlik", "accessibility",
+            "cihaz yönetici", "device admin", "devre dışı bırak"
+        ).map { normalize(it) }
         const val BOUNCE_DEBOUNCE_MS = 400L
         const val WATCHDOG_INTERVAL_MS = 2_000L
         const val MAX_MEASURE_GAP_MS = 10_000L

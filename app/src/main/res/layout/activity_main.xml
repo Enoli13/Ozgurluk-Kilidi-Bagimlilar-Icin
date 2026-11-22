@@ -110,6 +110,16 @@
                         android:text="Kullanım erişimi ver (telefon süresi)"
                         android:textAllCaps="false"
                         app:cornerRadius="14dp" />
+
+                    <com.google.android.material.button.MaterialButton
+                        android:id="@+id/btnBackgroundPermission"
+                        style="@style/Widget.Material3.Button.OutlinedButton"
+                        android:layout_width="match_parent"
+                        android:layout_height="56dp"
+                        android:gravity="start|center_vertical"
+                        android:text="Arka planda çalışma izinleri"
+                        android:textAllCaps="false"
+                        app:cornerRadius="14dp" />
                 </LinearLayout>
             </com.google.android.material.card.MaterialCardView>
 

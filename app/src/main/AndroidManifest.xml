@@ -5,6 +5,14 @@
     <!-- Kilit ekranını başka bir uygulamanın üstüne getirebilmek için gerekli. -->
     <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
 
+    <!-- Yedek bekçi: kalıcı bildirimli ön plan servisi, açılışta başlatma ve pil muafiyeti.
+         HyperOS uygulamayı arka planda öldürünce kilidin durmasını engeller. -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+    <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
+
     <!-- Etkinlik panelindeki "Telefon" süresi Android'in kullanım kayıtlarından okunur. -->
     <uses-permission
         android:name="android.permission.PACKAGE_USAGE_STATS"
@@ -83,6 +91,25 @@
                 android:name="android.accessibilityservice"
                 android:resource="@xml/accessibility_service_config" />
         </service>
+
+        <!-- Yedek bekçi: erişilebilirlik servisi öldürülse bile kilidi uygular. -->
+        <service
+            android:name=".GuardService"
+            android:exported="false"
+            android:foregroundServiceType="specialUse">
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="Kullanıcının kendi kurduğu ekran süresi kilidini arka planda sürdürmek" />
+        </service>
+
+        <receiver
+            android:name=".GuardRestartReceiver"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+                <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
+            </intent-filter>
+        </receiver>
 
         <!-- Widget'tan açılan düzenleme penceresi -->
         <activity

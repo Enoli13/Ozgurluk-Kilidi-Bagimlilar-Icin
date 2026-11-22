@@ -63,6 +63,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var chartActivities: ChartView
     private lateinit var btnAddActivity: MaterialButton
     private lateinit var btnUsage: MaterialButton
+    private lateinit var btnBackground: MaterialButton
     private lateinit var tvSelectedApps: TextView
     private lateinit var tvNoApps: TextView
     private lateinit var tvCommitInfo: TextView
@@ -161,6 +162,7 @@ class MainActivity : AppCompatActivity() {
         chartActivities = findViewById(R.id.chartActivities)
         btnAddActivity = findViewById(R.id.btnAddActivity)
         btnUsage = findViewById(R.id.btnUsagePermission)
+        btnBackground = findViewById(R.id.btnBackgroundPermission)
         tvSelectedApps = findViewById(R.id.tvSelectedApps)
         tvNoApps = findViewById(R.id.tvNoApps)
         tvCommitInfo = findViewById(R.id.tvCommitInfo)
@@ -291,6 +293,8 @@ class MainActivity : AppCompatActivity() {
 
         btnAddict.setOnClickListener { startAddictMode() }
 
+        btnBackground.setOnClickListener { showBackgroundSetup() }
+
         findViewById<TextView>(R.id.tvVersion).text = "Sürüm ${appVersionName()} · ayarlar ve kilit güncellemede korunur"
         findViewById<MaterialButton>(R.id.btnUpdate).setOnClickListener {
             try {
@@ -325,7 +329,11 @@ class MainActivity : AppCompatActivity() {
 
     override fun onResume() {
         super.onResume()
+        resumedAt = android.os.SystemClock.elapsedRealtime()
         LockSettings.addMetrolistOnce(this)
+        GuardService.ensureRunning(this)
+        syncRecents()
+        askNotificationPermissionOnce()
         if (AddictGuard.expireIfDone(this)) {
             toast("\"Bağımlılar İçin\" süresi doldu. Tebrikler, başardın!", long = true)
         }
@@ -395,6 +403,7 @@ class MainActivity : AppCompatActivity() {
         bindPermissionButton(btnOverlay, overlayOk, "Üstte gösterim izni")
         bindPermissionButton(btnAccessibility, accessibilityOk, "Erişilebilirlik servisi")
         bindPermissionButton(btnUsage, ActivityStore.hasUsageAccess(this), "Kullanım erişimi")
+        bindPermissionButton(btnBackground, isIgnoringBatteryOptimizations(), "Arka planda çalışma izni")
 
         // Seçili uygulamalar
         val allowed = queryLauncherApps(LockSettings.allowedApps(this))
@@ -526,6 +535,17 @@ class MainActivity : AppCompatActivity() {
                     tvStatus.setTextColor(color(R.color.danger))
                     tvStatusDetail.text =
                         "Erişilebilirlik servisi kapalı. Kilidin çalışması için 1. adımdan tekrar aç."
+                    return
+                }
+                // Ayarlarda açık görünse de servis gerçekten çalışıyor mu? (HyperOS öldürmüş olabilir)
+                val grace = android.os.SystemClock.elapsedRealtime() - resumedAt < 8_000L
+                if (!grace && !AppBlockerService.isAlive()) {
+                    tvStatus.text = "Kilit servisi durdurulmuş!"
+                    tvStatus.setTextColor(color(R.color.danger))
+                    tvStatusDetail.text =
+                        "Telefon, Erişilebilirlik servisini arka planda kapatmış. Yedek bekçi yine de " +
+                            "kilitliyor; ama kalıcı çözüm için 1. karttaki \"Arka planda çalışma izinleri\" " +
+                            "düğmesinden Otomatik başlatmayı aç ve pili \"Kısıtlama yok\" yap."
                     return
                 }
                 val lines = mutableListOf<String>()
@@ -778,6 +798,8 @@ class MainActivity : AppCompatActivity() {
     private fun armAddictMode() {
         LockSettings.setAddictArmed(this, true)
         AddictGuard.harden(this)
+        GuardService.ensureRunning(this)
+        syncRecents()
         render()
         toast("\"Bağımlılar İçin\" başladı. Yapabilirsin!", long = true)
     }
@@ -963,6 +985,102 @@ class MainActivity : AppCompatActivity() {
             }
             .setNegativeButton("İptal", null)
             .show()
+    }
+
+    // ---- Arka planda çalışma (HyperOS / MIUI) -----------------------------------------------------
+
+    private var resumedAt = 0L
+
+    /**
+     * Koruma sürerken uygulama "son uygulamalar" listesinde görünmez; böylece oradan kaydırılıp
+     * kapatılamaz (HyperOS bu hareketle Erişilebilirlik servisini de öldürüyordu).
+     */
+    private fun syncRecents() {
+        val hide = LockSettings.isTamperProtected(this) || LockSettings.isAddictModeOn(this)
+        try {
+            getSystemService(android.app.ActivityManager::class.java)
+                ?.appTasks?.forEach { it.setExcludeFromRecents(hide) }
+        } catch (e: Exception) {
+            // bazı sistemlerde desteklenmiyor
+        }
+    }
+
+    private fun isIgnoringBatteryOptimizations(): Boolean =
+        getSystemService(android.os.PowerManager::class.java)
+            ?.isIgnoringBatteryOptimizations(packageName) ?: false
+
+    private fun askNotificationPermissionOnce() {
+        if (Build.VERSION.SDK_INT < 33) return
+        if (checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS) ==
+            PackageManager.PERMISSION_GRANTED
+        ) return
+        val prefs = getSharedPreferences("ui_once", MODE_PRIVATE)
+        if (prefs.getBoolean("asked_notifications", false)) return
+        prefs.edit().putBoolean("asked_notifications", true).apply()
+        requestPermissions(arrayOf(android.Manifest.permission.POST_NOTIFICATIONS), 77)
+    }
+
+    private fun showBackgroundSetup() {
+        val battery = if (isIgnoringBatteryOptimizations()) "✓ verildi" else "verilmedi"
+        MaterialAlertDialogBuilder(this)
+            .setTitle("Arka planda çalışma izinleri")
+            .setMessage(
+                "HyperOS / MIUI, uygulamayı arka planda kapatıp kilidi durdurabiliyor. " +
+                    "Kilidin her zaman çalışması için ikisini de aç:\n\n" +
+                    "1) Otomatik başlatma: listede Özgürlük Kilidi'ni aç.\n" +
+                    "2) Pil: \"Kısıtlama yok\" seç ($battery).\n\n" +
+                    "Bu ekranlar 2 dakika boyunca koruma sürerken de açılabilir."
+            )
+            .setPositiveButton("Otomatik başlatma") { _, _ -> openAutostart() }
+            .setNeutralButton("Pil: kısıtlama yok") { _, _ -> openBatterySettings() }
+            .setNegativeButton("Kapat", null)
+            .show()
+    }
+
+    private fun openAutostart() {
+        LockSettings.openSetupWindow()
+        val intents = listOf(
+            Intent().setComponent(
+                ComponentName("com.miui.securitycenter", "com.miui.permcenter.autostart.AutoStartManagementActivity")
+            ),
+            Intent("miui.intent.action.OP_AUTO_START").addCategory(Intent.CATEGORY_DEFAULT)
+        )
+        for (intent in intents) {
+            try {
+                startActivity(intent)
+                return
+            } catch (e: Exception) {
+                // sıradakini dene
+            }
+        }
+        toast("Bu telefonda otomatik başlatma ekranı bulunamadı; gerekmiyor olabilir.", long = true)
+    }
+
+    @SuppressLint("BatteryLife")
+    private fun openBatterySettings() {
+        LockSettings.openSetupWindow()
+        // Önce Android'in "arka planda çalışsın mı?" sorusu, sonra HyperOS'un "Kısıtlama yok" ekranı.
+        if (!isIgnoringBatteryOptimizations()) {
+            try {
+                startActivity(
+                    Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS, "package:$packageName".toUri())
+                )
+                return
+            } catch (e: Exception) {
+                // açılamadı
+            }
+        }
+        try {
+            startActivity(
+                Intent("miui.intent.action.HIDDEN_APPS_CONFIG_ACTIVITY")
+                    .putExtra("package_name", packageName)
+                    .putExtra("package_label", getString(R.string.app_name))
+            )
+            return
+        } catch (e: Exception) {
+            // MIUI değil
+        }
+        toast("Pil ayarı zaten uygun ya da bu telefonda açılamadı.")
     }
 
     // ---- Yardımcılar ----------------------------------------------------------------------------

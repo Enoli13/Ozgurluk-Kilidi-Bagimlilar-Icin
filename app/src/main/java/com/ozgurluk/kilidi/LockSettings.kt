@@ -155,6 +155,20 @@ object LockSettings {
         emptySet()
     }
 
+    // ---- Arka planda çalışma izinleri (otomatik başlatma / pil) -------------------------------
+
+    @Volatile private var setupWindowUntil = 0L
+
+    /**
+     * Uygulamadaki "Arka planda çalışma izinleri" düğmesine basılınca 2 dakikalığına otomatik
+     * başlatma ve pil ekranlarının açılmasına izin verilir (koruma sürerken de).
+     */
+    fun openSetupWindow() {
+        setupWindowUntil = android.os.SystemClock.elapsedRealtime() + 2 * 60_000L
+    }
+
+    fun isSetupWindowOpen(): Boolean = android.os.SystemClock.elapsedRealtime() < setupWindowUntil
+
     /** Eski sürümlerin şifre verilerini cihazdan siler. */
     fun clearLegacyPasswordData(context: Context) = prefs(context).edit {
         remove("password_hash")
